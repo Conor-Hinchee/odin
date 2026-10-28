@@ -75,10 +75,9 @@
       text-wrap: pretty;
     }
 
-    /* Sticky Top Header */
+    /* Top Header (scrolls with the page; sticky took too much room on phones) */
     .odin-header {
-      position: sticky;
-      top: 0;
+      position: relative;
       z-index: 40;
       backdrop-filter: blur(16px);
       background: color-mix(in srgb, var(--surface) 86%, transparent);
@@ -1781,6 +1780,9 @@
           ["human-validation", "👑 V. Human Validation", true]
         ];
 
+        // Fresh cards have no row span until layoutProjectsMosaic() measures them, so the
+        // grid briefly collapses; hold its height so the browser doesn't clamp the scroll.
+        grid.style.minHeight = `${grid.offsetHeight}px`;
         grid.innerHTML = filtered.map(p => {
           const isAwaitingSignoff = Boolean(p.awaitingSignoff || (p.overallStatus === "done" && p.humanStatus !== "done"));
           const badgeClass = isAwaitingSignoff
@@ -2011,6 +2013,7 @@
         }
 
         layoutProjectsMosaic();
+        grid.style.minHeight = "";
       }
 
       async function postAction(payload, toastTitle, toastBody, soundKind = "phase") {
