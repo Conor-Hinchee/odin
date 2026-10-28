@@ -70,6 +70,10 @@ Optional settings (repos, ports, telemetry, skill pills, PR telemetry, staging) 
    - ask them in chat with AskUserQuestion as well, so the user can answer in either place;
    - arm the wakeup watcher (below) before ending your turn.
 8. **Closing the loop (first tool call).** When the user answers questions, approves, or rejects, your **first** tool call that turn moves the paused phase out of `awaiting_human` with `update-phase`. On a rejection or follow-up feedback after phase 4 or 5, the first call is `step-back` (see phase 5).
+9. **Check for other sessions before editing a repo.** Other Claude sessions may be working in the same checkout, including Odin's own repository, which `odin-isolate.py` doesn't cover. Before your first edit, and again before you stage, run `git status`:
+   - If it shows changes you didn't make (staged or unstaged), another session is probably working there. Don't edit around them. Move to a worktree (`git worktree add <path> -b <branch>`) and record it with `set-env`, or ask the user.
+   - Never stage changes you didn't make. Stage your own paths by name (`git add <path> …`), never `git add -A` or `git add .`, and check `git diff --cached` before committing.
+   - If someone else's staged changes include your edits (or yours include theirs), stop and log it as an `incident` before anything is committed.
 
 ### Reactive wakeup bridge (`wait-for-human`)
 
@@ -122,7 +126,7 @@ graph TD
   > *GIT GUARDRAIL: You are working in `<worktree>` on branch `<branch>`. Edit ONLY these files: `<file-list>`. NEVER run `git commit`, `git checkout`, `git switch`, `git pull`, `git reset`, `git stash`, or `git clean`. Leave verified edits in the working tree for Thor to commit.*
 
   Valkyrie roles: **Brunhild** (core logic and integrations), **Gunnr** (tests and fixtures), **Kara** (refactors, renames, lint sweeps), **Sigrun** (schemas, contracts, tool registrations).
-- **Thor is the only committer.** Stage and commit at verified checkpoints.
+- **Thor is the only committer.** Stage and commit at verified checkpoints, staging your own files by name (ground rule 9).
 - Keep the timeline current as you work (ground rule 6). The hook records commits and Valkyrie dispatch and return; you log findings, decisions and plan changes. When the phase ends, write the summary into the card body with `update-phase --status done --html …`. The timeline stays below it.
 
 ### Phase 3: Heimdall (verify + pre-PR review gate)
