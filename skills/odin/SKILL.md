@@ -71,8 +71,9 @@ Optional settings (repos, ports, telemetry, skill pills, PR telemetry, staging) 
    - arm the wakeup watcher (below) before ending your turn.
 8. **Closing the loop (first tool call).** When the user answers questions, approves, or rejects, your **first** tool call that turn moves the paused phase out of `awaiting_human` with `update-phase`. On a rejection or follow-up feedback after phase 4 or 5, the first call is `step-back` (see phase 5).
 9. **Check for other sessions before editing a repo.** Other Claude sessions may be working in the same checkout, including Odin's own repository, which `odin-isolate.py` doesn't cover. Before your first edit, and again before you stage, run `git status`:
-   - If it shows changes you didn't make (staged or unstaged), another session is probably working there. Don't edit around them. Move to a worktree (`git worktree add <path> -b <branch>`) and record it with `set-env`, or ask the user.
+   - If it shows changes you didn't make (staged or unstaged), another session is probably working there. Don't edit around them. Move to a worktree (`git worktree add <path> -b <branch>`) and record it with `set-env`, or ask the user. This applies even in repos whose convention is to commit straight to `main`: do the work on a branch in the worktree, then fast-forward `main` when you commit.
    - Never stage changes you didn't make. Stage your own paths by name (`git add <path> …`), never `git add -A` or `git add .`, and check `git diff --cached` before committing.
+   - If a file holds both your edits and someone else's, `git add <path>` takes theirs too. Stage only your hunks: save `git diff <path>`, delete the hunks that aren't yours, and `git apply --cached` the rest. Or wait until they've committed.
    - If someone else's staged changes include your edits (or yours include theirs), stop and log it as an `incident` before anything is committed.
 
 ### Reactive wakeup bridge (`wait-for-human`)
@@ -109,7 +110,7 @@ graph TD
 
 ### Phase 1: Huginn (plan)
 - Analyze the request and the codebase. Bootstrap the state file, start the server, and send the bootstrap notification (ground rule 5).
-- If the user has configured repos, lock in an isolated branch, worktree and ports with `odin-isolate.py allocate` ([references/isolation.md](references/isolation.md)) and stamp them on `<body>`. Otherwise record the current repo and branch.
+- If the user has configured repos, lock in an isolated branch, worktree and ports with `odin-isolate.py allocate` ([references/isolation.md](references/isolation.md)) and stamp them on `<body>`. Otherwise record the current repo and branch. Either way, run ground rule 9's `git status` check first, and plan in a worktree if the checkout has changes this task didn't make.
 - Write into `#huginn-plan`:
   1. **Environment**: branch, worktree, ports.
   2. **Plan**: concrete steps ordered by dependency.
