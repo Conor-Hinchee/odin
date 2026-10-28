@@ -8,7 +8,9 @@ across Odin state HTML files, and powers the Mímir/Kvasir Harness Audit workflo
 """
 
 import argparse
+import contextlib
 import datetime
+import fcntl
 import difflib
 import html as html_mod
 import json
@@ -2778,34 +2780,68 @@ def mutate_section_body(content: str, sec_id: str, mutator_fn) -> str:
     return content[: match.start()] + prefix + new_body + suffix + content[match.end() :]
 
 
-def upsert_iteration_card_in_body(
-    body: str, iteration: int, summary_title: str, status: str, inner_html: str
-) -> str:
-    status_upper = status.upper()
-    card_html = (
-        f'\n      <details class="odin-iteration-card" data-iteration="{iteration}" open>\n'
-        f"        <summary>\n"
-        f"          <span>{summary_title}</span>\n"
-        f'          <span class="tag">{status_upper}</span>\n'
-        f"        </summary>\n"
-        f'        <div class="odin-iteration-body" style="margin-top: 12px;">\n'
-        f"          {inner_html}\n"
-        f"        </div>\n"
-        f"      </details>\n    "
-    )
-    # Check if card for `data-iteration="{iteration}"` already exists using balanced <details> matching
+def _find_iteration_card(body: str, iteration: int) -> tuple[int, int] | None:
     open_card_re = re.compile(
         rf'<details\b[^>]*\bclass=["\'][^"\']*odin-iteration-card[^"\']*["\'][^>]*\bdata-iteration=["\']{iteration}["\'][^>]*>',
         re.IGNORECASE,
     )
     open_m = open_card_re.search(body)
-    if open_m:
-        bal = _find_balanced_tag_span(body, open_m, "details")
-        if bal:
-            s_start, s_end = bal
-            while s_start > 0 and body[s_start - 1] in (" ", "\t", "\n", "\r"):
-                s_start -= 1
-            return body[:s_start] + card_html.rstrip() + body[s_end:].rstrip() + "\n    "
+    return _find_balanced_tag_span(body, open_m, "details") if open_m else None
+
+
+def _extract_balanced(html: str, open_re: str, tag: str) -> str:
+    m = re.search(open_re, html, re.IGNORECASE)
+    if not m:
+        return ""
+    span = _find_balanced_tag_span(html, m, tag)
+    return html[span[0] : span[1]] if span else ""
+
+
+def _extract_progress_log(card_html: str) -> str:
+    return _extract_balanced(card_html, r'<ol\b[^>]*\bclass=["\'][^"\']*odin-progress-log[^"\']*["\'][^>]*>', "ol")
+
+
+def _extract_card_body(card_html: str) -> str:
+    # Matches both odin-iteration-body (written here) and iteration-body (template placeholder cards).
+    return _extract_balanced(card_html, r'<div\b[^>]*\bclass=["\'][^"\']*\biteration-body\b[^"\']*["\'][^>]*>', "div")
+
+
+def _build_iteration_card(iteration: int, summary_title: str, status: str, body_div: str, log_html: str = "") -> str:
+    log_part = f"\n        {log_html}" if log_html else ""
+    return (
+        f'\n      <details class="odin-iteration-card" data-iteration="{iteration}" open>\n'
+        f"        <summary>\n"
+        f"          <span>{summary_title}</span>\n"
+        f'          <span class="tag">{status.upper()}</span>\n'
+        f"        </summary>\n"
+        f"        {body_div}{log_part}\n"
+        f"      </details>\n    "
+    )
+
+
+def upsert_iteration_card_in_body(
+    body: str, iteration: int, summary_title: str, status: str, inner_html: str, keep_body: bool = False
+) -> str:
+    """Create or update the card for `iteration`.
+
+    The card's progress log (see `cmd_log`) always survives an update. With
+    keep_body, an existing card keeps its body and only the title/status change.
+    """
+    new_body_div = (
+        f'<div class="odin-iteration-body" style="margin-top: 12px;">\n'
+        f"          {inner_html}\n"
+        f"        </div>"
+    )
+    bal = _find_iteration_card(body, iteration)
+    if bal:
+        s_start, s_end = bal
+        old_card = body[s_start:s_end]
+        body_div = (_extract_card_body(old_card) if keep_body else "") or new_body_div
+        card_html = _build_iteration_card(iteration, summary_title, status, body_div, _extract_progress_log(old_card))
+        while s_start > 0 and body[s_start - 1] in (" ", "\t", "\n", "\r"):
+            s_start -= 1
+        return body[:s_start] + card_html.rstrip() + body[s_end:].rstrip() + "\n    "
+    card_html = _build_iteration_card(iteration, summary_title, status, new_body_div)
 
     # Collapse prior cards and append new card
     collapsed = re.sub(
@@ -2823,6 +2859,197 @@ def upsert_iteration_card_in_body(
             flags=re.IGNORECASE,
         )
     return collapsed.rstrip() + card_html
+
+
+# Progress log: an append-only timeline inside each iteration card, so work is
+# recorded as it happens instead of in one fragment at the end of a phase.
+PROGRESS_LOG_KINDS = {
+    "step": "▸",
+    "phase": "🚦",
+    "commit": "🔨",
+    "test": "🧪",
+    "finding": "🔎",
+    "decision": "⚖️",
+    "plan-change": "🗺️",
+    "valkyrie": "⚔️",
+    "incident": "🚨",
+    "env": "🌿",
+}
+
+ODIN_PROGRESS_LOG_STYLES = """<style id="odin-progress-log-styles">
+    .odin-progress-log { list-style: none; margin: 14px 0 0; padding: 10px 0 0; border-top: 1px dashed var(--border, #334155); font-size: 0.84rem; }
+    .odin-progress-log > li { display: grid; grid-template-columns: 1.6em 3.4em 1fr; gap: 0.4rem; align-items: baseline; padding: 3px 0; }
+    .odin-progress-log time { color: var(--muted, #94a3b8); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; }
+    .odin-progress-log .odin-log-text { overflow-wrap: anywhere; }
+    .odin-progress-log li[data-kind="incident"] .odin-log-text,
+    .odin-progress-log li[data-outcome="fail"] .odin-log-text { color: var(--crimson, #f43f5e); }
+    .odin-progress-log details { grid-column: 3; }
+    .odin-progress-log details > summary { font-size: 0.72rem; color: var(--muted, #94a3b8); cursor: pointer; width: fit-content; }
+    .odin-progress-log details pre { white-space: pre-wrap; font-size: 0.75rem; margin: 4px 0 0; color: var(--muted, #94a3b8); }
+  </style>"""
+
+
+def ensure_progress_log_styles(content: str) -> str:
+    style_pat = re.compile(r'<style[^>]*id=["\']odin-progress-log-styles["\'][^>]*>[\s\S]*?</style>', re.IGNORECASE)
+    if style_pat.search(content):
+        return style_pat.sub(lambda _m: ODIN_PROGRESS_LOG_STYLES, content, count=1)
+    head_close = re.search(r"</head>", content, re.IGNORECASE)
+    if not head_close:
+        return content
+    idx = head_close.start()
+    return content[:idx] + "  " + ODIN_PROGRESS_LOG_STYLES + "\n" + content[idx:]
+
+
+def render_progress_log_entry(kind: str, text: str, detail: str = "", ts: str = "", outcome: str = "") -> str:
+    ts = ts or now_iso()
+    try:
+        hhmm = datetime.datetime.fromisoformat(ts).strftime("%H:%M")
+    except ValueError:
+        hhmm = ""
+    icon = PROGRESS_LOG_KINDS.get(kind, PROGRESS_LOG_KINDS["step"])
+    outcome_attr = f' data-outcome="{html_mod.escape(outcome)}"' if outcome else ""
+    detail_html = (
+        f"<details><summary>details</summary><pre>{html_mod.escape(detail)}</pre></details>" if detail else ""
+    )
+    return (
+        f'<li data-kind="{html_mod.escape(kind)}"{outcome_attr}>'
+        f'<span class="odin-log-icon">{icon}</span>'
+        f'<time datetime="{html_mod.escape(ts)}">{hhmm}</time>'
+        f'<span class="odin-log-text">{html_mod.escape(text)}</span>{detail_html}</li>'
+    )
+
+
+def append_progress_log(
+    content: str, phase_key: str, iteration: int, kind: str, text: str, detail: str = "", ts: str = "", outcome: str = ""
+) -> tuple[str, bool]:
+    """Append an entry to a phase's iteration card, creating the card if needed.
+
+    Returns (content, appended). An entry identical to the previous one is skipped.
+    """
+    sec_id, _, phase_title = PHASE_MAP[phase_key]
+    entry = render_progress_log_entry(kind, text, detail, ts, outcome)
+    appended = False
+
+    def mutate(body: str) -> str:
+        nonlocal appended
+        bal = _find_iteration_card(body, iteration)
+        if not bal:
+            status = _get_section_status(content, phase_key)
+            body = upsert_iteration_card_in_body(
+                body, iteration, f"Iteration {iteration} — {phase_title}", "active" if status == "pending" else status, ""
+            )
+            bal = _find_iteration_card(body, iteration)
+            if not bal:
+                return body
+        s_start, s_end = bal
+        card = body[s_start:s_end]
+        log_html = _extract_progress_log(card)
+        if log_html:
+            entries = re.findall(
+                r'<li\b[^>]*\bdata-kind="([^"]*)"[^>]*>[\s\S]*?<span class="odin-log-text">([\s\S]*?)</span>', log_html
+            )
+            if entries and entries[-1] == (html_mod.escape(kind), html_mod.escape(text)):
+                return body
+            close_idx = log_html.rfind("</ol>")
+            new_log = log_html[:close_idx].rstrip() + "\n          " + entry + "\n        </ol>"
+            new_card = card.replace(log_html, new_log, 1)
+        else:
+            new_log = f'<ol class="odin-progress-log">\n          {entry}\n        </ol>'
+            close_idx = card.rfind("</details>")
+            new_card = card[:close_idx].rstrip() + "\n        " + new_log + "\n      " + card[close_idx:]
+        appended = True
+        return body[:s_start] + new_card + body[s_end:]
+
+    content = mutate_section_body(content, sec_id, mutate)
+    if appended:
+        content = ensure_progress_log_styles(content)
+    return content, appended
+
+
+def record_ledger_event(ledger: dict, iteration: int, event: dict) -> None:
+    for it_obj in ledger.setdefault("iterations", []):
+        if int(it_obj.get("iteration", 0)) == iteration:
+            it_obj.setdefault("events", []).append(event)
+            return
+    ledger["iterations"].append(
+        {"iteration": iteration, "started_at": now_iso(), "status": "active", "phases": {}, "events": [event]}
+    )
+
+
+def current_phase_key(content: str) -> str:
+    """The phase work is happening in: the furthest active/awaiting phase, else Thor.
+
+    Furthest, because an earlier phase can be left "active" when a later one pauses.
+    """
+    for key in reversed((*AI_PHASE_ORDER, "human")):
+        if _get_section_status(content, key) in ("active", "awaiting_human"):
+            return key
+    return "thor"
+
+
+_held_locks: set[str] = set()
+
+
+@contextlib.contextmanager
+def state_file_lock(html_path: Path):
+    """Serialize read-modify-write of a state file across processes (hooks, agents, CLI).
+
+    Re-entrant within a process, so a locked command can call log_progress.
+    """
+    key = str(Path(html_path).resolve())
+    if key in _held_locks:
+        yield
+        return
+    lock_path = Path(html_path).with_name(f".{Path(html_path).name}.lock")
+    with open(lock_path, "a") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        _held_locks.add(key)
+        try:
+            yield
+        finally:
+            _held_locks.discard(key)
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+
+def log_progress(
+    html_path: Path,
+    kind: str,
+    text: str,
+    phase_key: str = "",
+    detail: str = "",
+    outcome: str = "",
+    extra: dict | None = None,
+    ts: str = "",
+) -> bool:
+    """Append a progress entry to a state file and its ledger. Returns False for a skipped duplicate.
+
+    ts backdates the entry (ISO 8601); it defaults to now.
+    """
+    with state_file_lock(html_path):
+        return _log_progress_locked(html_path, kind, text, phase_key, detail, outcome, extra, ts)
+
+
+def _log_progress_locked(
+    html_path: Path, kind: str, text: str, phase_key: str, detail: str, outcome: str, extra: dict | None, ts: str
+) -> bool:
+    content = html_path.read_text(encoding="utf-8")
+    ledger = extract_ledger(content, str(html_path))
+    iteration = int(ledger.get("current_iteration", 1))
+    phase_key = phase_key or current_phase_key(content)
+    ts = ts or now_iso()
+    content, appended = append_progress_log(content, phase_key, iteration, kind, text, detail, ts, outcome)
+    if not appended:
+        return False
+    event = {"ts": ts, "phase": phase_key, "kind": kind, "text": text}
+    if detail:
+        event["detail"] = detail
+    if outcome:
+        event["outcome"] = outcome
+    event.update(extra or {})
+    record_ledger_event(ledger, iteration, event)
+    content = save_ledger_into_html(content, ledger)
+    html_path.write_text(content, encoding="utf-8")
+    return True
 
 
 def _resolve_html_path(args: argparse.Namespace) -> Path:
@@ -2968,6 +3195,13 @@ def cmd_step_back(args: argparse.Namespace) -> int:
     content = save_ledger_into_html(content, ledger)
 
     html_path.write_text(content, encoding="utf-8")
+    log_progress(
+        html_path,
+        "phase",
+        f"Iteration {next_iter} started ({args.source}): {args.reason}",
+        phase_key="thor",
+        detail=f"Root cause: {args.root_cause}" if args.root_cause else "",
+    )
     trigger_notify(
         f"Phase 2: Thor — Iteration {next_iter}",
         f"Stepped back ({args.source}): {args.reason[:80]}",
@@ -3969,13 +4203,18 @@ def cmd_update_phase(args: argparse.Namespace) -> int:
         return 1
 
     sec_id, _, phase_title = PHASE_MAP[phase_key]
+    prev_status = _get_section_status(content, phase_key)
+    status_changed = prev_status != args.status
     inner_html = ""
+    # A summary alone only fills a card that has no body yet; it never replaces a richer one.
+    keep_body = False
     if args.html_file_fragment:
         inner_html = Path(args.html_file_fragment).read_text(encoding="utf-8")
     elif args.html:
         inner_html = args.html
     elif args.summary:
         inner_html = f"<p>{html_mod.escape(args.summary)}</p>"
+        keep_body = not getattr(args, "with_diff", False)
 
     pr_url = (getattr(args, "pr_url", "") or "").strip()
     if pr_url:
@@ -4015,11 +4254,20 @@ def cmd_update_phase(args: argparse.Namespace) -> int:
             content,
             sec_id,
             lambda body: upsert_iteration_card_in_body(
-                body, target_iter, summary_title, args.status, inner_html
+                body, target_iter, summary_title, args.status, inner_html, keep_body=keep_body
             ),
         )
 
     content = set_step_and_section_status(content, phase_key, args.status)
+
+    transition_event = None
+    if status_changed:
+        short_title = phase_title.split(": ", 1)[-1]
+        transition_text = f"{short_title} → {args.status}" + (f": {args.summary}" if args.summary else "")
+        ts = now_iso()
+        content, logged = append_progress_log(content, phase_key, target_iter, "phase", transition_text, ts=ts)
+        if logged:
+            transition_event = {"ts": ts, "phase": phase_key, "kind": "phase", "text": transition_text}
 
     # Reconcile upstream/downstream AI phase statuses so stale awaiting_human states are automatically closed
     auto_reconciled = {}
@@ -4082,6 +4330,8 @@ def cmd_update_phase(args: argparse.Namespace) -> int:
         if pr_url:
             new_it["pr_url"] = pr_url
         ledger.setdefault("iterations", []).append(new_it)
+    if transition_event:
+        record_ledger_event(ledger, target_iter, transition_event)
 
     content = save_ledger_into_html(content, ledger)
     html_path.write_text(content, encoding="utf-8")
@@ -4091,18 +4341,113 @@ def cmd_update_phase(args: argparse.Namespace) -> int:
     ):
         sync_parent_mimir_delta_on_completion(html_path, content, ledger)
 
-    sound_mode = (
-        "awaiting_human"
-        if args.status == "awaiting_human"
-        else ("complete" if phase_key == "human" and args.status == "done" else "phase")
-    )
-    trigger_notify(
-        f"{phase_title} (Iter {target_iter})",
-        args.summary or f"Status transitioned to {args.status.upper()}",
-        sound_mode,
-        html_path,
-    )
+    # Chime only when the phase actually moved; same-status progress updates stay quiet.
+    if status_changed:
+        sound_mode = (
+            "awaiting_human"
+            if args.status == "awaiting_human"
+            else ("complete" if phase_key == "human" and args.status == "done" else "phase")
+        )
+        trigger_notify(
+            f"{phase_title} (Iter {target_iter})",
+            args.summary or f"Status transitioned to {args.status.upper()}",
+            sound_mode,
+            html_path,
+        )
     print(f"Updated {html_path.name} [{phase_key}] Iteration {target_iter} -> {args.status.upper()}.")
+    return 0
+
+
+def cmd_log(args: argparse.Namespace) -> int:
+    try:
+        html_path = _resolve_html_path(args)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    if not html_path.exists():
+        print(f"Error: File not found: {html_path}", file=sys.stderr)
+        return 1
+    phase_key = PHASE_ALIASES.get(args.phase.lower(), "") if args.phase else ""
+    if args.phase and not phase_key:
+        print(f"Error: Invalid phase {args.phase}", file=sys.stderr)
+        return 1
+    ts = ""
+    if args.at:
+        try:
+            parsed = datetime.datetime.fromisoformat(args.at)
+        except ValueError:
+            print(f"Error: --at must be ISO 8601, got {args.at}", file=sys.stderr)
+            return 1
+        ts = (parsed if parsed.tzinfo else parsed.astimezone()).isoformat(timespec="seconds")
+    if log_progress(html_path, args.kind, args.text, phase_key, args.detail or "", args.outcome or "", ts=ts):
+        print(f"Logged {html_path.name} [{phase_key or 'current phase'}] {args.kind}: {args.text}")
+    else:
+        print(f"Skipped duplicate entry in {html_path.name}: {args.text}")
+    return 0
+
+
+ENV_BAR_PATTERNS = {
+    "branch": r"(>🌿 )[^<]*(</span>)",
+    "repo": r"(>🗂️ )[^<]*(</span>)",
+    "app_port": r"(>🌐 app :)[^<]*(</span>)",
+    "backend_port": r"(>🧩 backend :)[^<]*(</span>)",
+}
+
+
+def set_body_env(content: str, branch=None, worktree=None, app_port=None, backend_port=None) -> str:
+    body_m = re.search(r"""<body\b(?:[^>"']|"[^"]*"|'[^']*')*>""", content, re.IGNORECASE)
+    if not body_m:
+        return content
+    body_tag = body_m.group(0)
+    for attr, value in (
+        ("data-branch", branch),
+        ("data-worktree", worktree),
+        ("data-app-port", app_port),
+        ("data-backend-port", backend_port),
+    ):
+        if value is None:
+            continue
+        escaped = html_mod.escape(value)
+        if re.search(rf'\b{attr}="[^"]*"', body_tag):
+            body_tag = re.sub(rf'\b{attr}="[^"]*"', lambda _m: f'{attr}="{escaped}"', body_tag)
+        else:
+            body_tag = body_tag[:-1] + f' {attr}="{escaped}">'
+    content = content[: body_m.start()] + body_tag + content[body_m.end() :]
+    bar_values = {
+        "branch": branch,
+        "repo": os.path.basename(worktree.rstrip("/")) if worktree else None,
+        "app_port": app_port or ("none" if app_port == "" else None),
+        "backend_port": backend_port or ("none" if backend_port == "" else None),
+    }
+    for key, value in bar_values.items():
+        if value is not None:
+            content = re.sub(ENV_BAR_PATTERNS[key], lambda m: m.group(1) + html_mod.escape(value) + m.group(2), content, count=1)
+    return content
+
+
+def cmd_set_env(args: argparse.Namespace) -> int:
+    try:
+        html_path = _resolve_html_path(args)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    if not html_path.exists():
+        print(f"Error: File not found: {html_path}", file=sys.stderr)
+        return 1
+    changes = {
+        "branch": args.branch,
+        "worktree": os.path.abspath(args.worktree) if args.worktree else None,
+        "app_port": args.app_port,
+        "backend_port": args.backend_port,
+    }
+    if all(v is None for v in changes.values()):
+        print("Error: pass at least one of --branch, --worktree, --app-port, --backend-port", file=sys.stderr)
+        return 1
+    content = set_body_env(html_path.read_text(encoding="utf-8"), **changes)
+    html_path.write_text(content, encoding="utf-8")
+    summary = ", ".join(f"{k.replace('_', ' ')}={v or 'none'}" for k, v in changes.items() if v is not None)
+    log_progress(html_path, "env", f"Environment: {summary}" + (f" ({args.reason})" if args.reason else ""))
+    print(f"Updated environment of {html_path.name}: {summary}")
     return 0
 
 
@@ -5707,6 +6052,27 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--pr-url", help="GitHub Pull Request URL to stamp on <body> and render in the header & phase card")
     up.set_defaults(func=cmd_update_phase)
 
+    lg = sub.add_parser("log", help="Append a progress entry to a phase's iteration card (no status change, no notification)")
+    lg.add_argument("html_file", nargs="?", help="Path to odin-states/<slug>.html")
+    lg.add_argument("--file", help="Path to odin-states/<slug>.html")
+    lg.add_argument("--phase", help="Phase to log under (defaults to the current active phase)")
+    lg.add_argument("--kind", default="step", choices=list(PROGRESS_LOG_KINDS.keys()))
+    lg.add_argument("--text", required=True, help="One-line entry")
+    lg.add_argument("--detail", help="Optional longer text, shown collapsed under the entry")
+    lg.add_argument("--outcome", choices=["pass", "fail"], help="For test entries: pass or fail")
+    lg.add_argument("--at", help="When it happened (ISO 8601), for recording events after the fact; defaults to now")
+    lg.set_defaults(func=cmd_log)
+
+    env = sub.add_parser("set-env", help="Restamp branch/worktree/ports on a state file and log the change")
+    env.add_argument("html_file", nargs="?", help="Path to odin-states/<slug>.html")
+    env.add_argument("--file", help="Path to odin-states/<slug>.html")
+    env.add_argument("--branch")
+    env.add_argument("--worktree")
+    env.add_argument("--app-port")
+    env.add_argument("--backend-port")
+    env.add_argument("--reason", help="Why the environment changed")
+    env.set_defaults(func=cmd_set_env)
+
     pd = sub.add_parser("propose-delta", help="Record a Phase 4 Hlidskjalf Harness Delta Proposal for Mímir/Kvasir")
     pd.add_argument("html_file", nargs="?", help="Path to odin-states/<slug>.html")
     pd.add_argument("--file", help="Path to odin-states/<slug>.html")
@@ -5765,7 +6131,23 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+# Commands that rewrite a state file hold its lock, so concurrent hook writes aren't lost.
+LOCKED_COMMANDS = {"update-phase", "log", "set-env", "step-back", "propose-delta", "refresh-diff"}
+
+
+def run_command(parsed_args: argparse.Namespace) -> int:
+    if parsed_args.command in LOCKED_COMMANDS:
+        try:
+            html_path = _resolve_html_path(parsed_args)
+        except ValueError:
+            return parsed_args.func(parsed_args)
+        if html_path.exists():
+            with state_file_lock(html_path):
+                return parsed_args.func(parsed_args)
+    return parsed_args.func(parsed_args)
+
+
 if __name__ == "__main__":
     parser = build_parser()
     parsed_args = parser.parse_args()
-    sys.exit(parsed_args.func(parsed_args))
+    sys.exit(run_command(parsed_args))

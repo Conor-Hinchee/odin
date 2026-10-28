@@ -14,6 +14,7 @@ Scripts live in `${CLAUDE_SKILL_DIR}/scripts/`. In the commands below, `ODIN=${C
 | `odin-server.py` | Dashboard + state server (`--dir <root> --port 8788`) |
 | `odin-state.py` | Phase updates, iterations, diffs, wakeups, deltas, staging. See [references/cli.md](references/cli.md) |
 | `odin-isolate.py` | Worktree + port allocation for configured repos. See [references/isolation.md](references/isolation.md) |
+| `odin-progress-hook.py` | Plugin hook that logs commits, check commands and subagents into the active task's timeline |
 | `odin-notify.sh` | Desktop notification + chime (click opens the task page via terminal-notifier on macOS) |
 
 Optional settings (repos, ports, telemetry, skill pills, PR telemetry, staging) come from `~/.config/odin/config.json` or `<workspace>/.odin/config.json`. Run `python3 "$ODIN/odin_config.py"` to print the effective config. Everything works with no config.
@@ -39,12 +40,31 @@ Optional settings (repos, ports, telemetry, skill pills, PR telemetry, staging) 
    - `[🌐 Open <task-slug>](<base url>/<path-from-root>/odin-states/<task-slug>.html)`
    - `[🏛️ Odin Dashboard](<base url>/)`
    - the state file path
-5. **Update in real time.** Mark a phase `active` when it starts, and `done`, `reject` or `awaiting_human` the moment it ends, using `odin-state.py update-phase`. Never batch status updates at the end of a turn. Never overwrite earlier iteration cards: `update-phase` only touches the current `data-iteration="N"` card.
-6. **Notify on every phase change**, including every pause for questions:
-   ```bash
-   sh "$ODIN/odin-notify.sh" "<Phase name>" "<one-line status>" "<phase|awaiting_human|done|reject>" "odin-states/<task-slug>.html"
-   ```
-   Use `phase` for phase 1 and 2 transitions, `awaiting_human` when pausing for input, `done` when phase 3 or 4 completes, and `reject` when Heimdall rejects. Always pass the state file: clicking the banner then opens the task's page, and the banner is skipped when an open Odin page with browser notifications allowed already shows the alert.
+5. **Update status in real time.** Mark a phase `active` when it starts, and `done`, `reject` or `awaiting_human` the moment it ends, using `odin-state.py update-phase`. Never batch status updates at the end of a turn.
+   - `update-phase` only touches the current `data-iteration="N"` card, and never loses that card's timeline. With only `--summary`, it keeps the card's existing body.
+   - Whenever the status actually changes, `update-phase` notifies (desktop banner and chime; clicking opens the task page) and adds a 🚦 entry to the timeline. `step-back` does the same for a new iteration. Don't call `odin-notify.sh` yourself for phase changes. The one manual call is when you bootstrap a task, because a new state file already starts with Huginn `active`:
+     ```bash
+     sh "$ODIN/odin-notify.sh" "Phase 1: Huginn" "<one-line status>" phase "odin-states/<task-slug>.html"
+     ```
+6. **Log progress as it happens.** Every iteration card has a timeline, so the state file should show what happened during a phase, not only how it ended.
+   - The plugin's progress hook adds entries on its own for every `git commit`, every check command (tests, lint, typecheck, build, with pass/fail), and every subagent dispatch and return.
+   - Log everything else with `log` the moment it happens, not at the end of the phase. `log` never changes status and never notifies:
+     ```bash
+     python3 "$ODIN/odin-state.py" log --file "odin-states/<task-slug>.html" --kind <kind> --text "<one line>" [--detail "<longer output>"]
+     ```
+
+     | When | `--kind` |
+     |---|---|
+     | You record a baseline, or a check result the hook didn't see (run by a subagent, or checked by hand) | `test` with `--outcome pass\|fail` |
+     | You find something unexpected: a bug, a regression, a root cause | `finding` |
+     | You pick between approaches or accept a trade-off | `decision` |
+     | The approved plan changes (a step is added or dropped, a version is pinned, scope moves) | `plan-change`, with `--phase huginn` |
+     | Something goes wrong outside the code, or you cause a side effect | `incident` |
+     | A meaningful step finishes without a commit | `step` |
+
+   - When the branch, worktree or ports change, run `set-env --branch/--worktree/--app-port/--backend-port --reason "…"`. It restamps `<body>` and the header, and logs the change.
+   - Entries go to the current phase (the furthest one that is active or awaiting the human) unless you pass `--phase`.
+   - If the user turned the hook off (`"progress": {"capture": false}`), log commits and Valkyrie dispatch and return yourself.
 7. **Pausing for the human.** When you stop to ask questions or wait for approval:
    - set the blocked section to `data-status="awaiting_human"`, and list the exact questions in `<div class="open-questions-box"><ol><li>…</li></ol></div>` inside it;
    - ask them in chat with AskUserQuestion as well, so the user can answer in either place;
@@ -84,7 +104,7 @@ graph TD
 ```
 
 ### Phase 1: Huginn (plan)
-- Analyze the request and the codebase. Bootstrap the state file, start the server, notify.
+- Analyze the request and the codebase. Bootstrap the state file, start the server, and send the bootstrap notification (ground rule 5).
 - If the user has configured repos, lock in an isolated branch, worktree and ports with `odin-isolate.py allocate` ([references/isolation.md](references/isolation.md)) and stamp them on `<body>`. Otherwise record the current repo and branch.
 - Write into `#huginn-plan`:
   1. **Environment**: branch, worktree, ports.
@@ -92,6 +112,7 @@ graph TD
   3. **Testing strategy**: the exact test, lint and type-check commands.
   4. **Definition of Done**: an unambiguous checklist.
   5. **Parallelism**: whether parts can run as parallel Valkyries, with a disjoint file-ownership matrix if so.
+- **Plan changes after approval** are logged on Huginn as they happen (`log --phase huginn --kind plan-change`), so the plan on the page never silently diverges from what was built.
 - **Blueprint review.** The human can co-edit the plan inline in the state file, attach `/skill` pills, and click **⚡ Save Edits & Launch Phase 2** (`approve_huginn`) or **🪶 Ask Huginn to Revise** (`revise_huginn`). For a non-trivial plan, or whenever there are open questions, pause at `awaiting_human` (ground rule 7) and arm the watcher. On `approve_huginn`, re-read `#huginn-plan` from disk first, because the human may have edited it.
 
 ### Phase 2: Thor and the Valkyries (execute)
@@ -102,7 +123,7 @@ graph TD
 
   Valkyrie roles: **Brunhild** (core logic and integrations), **Gunnr** (tests and fixtures), **Kara** (refactors, renames, lint sweeps), **Sigrun** (schemas, contracts, tool registrations).
 - **Thor is the only committer.** Stage and commit at verified checkpoints.
-- Record what changed in the iteration card, mark the phase done, and notify.
+- Keep the timeline current as you work (ground rule 6). The hook records commits and Valkyrie dispatch and return; you log findings, decisions and plan changes. When the phase ends, write the summary into the card body with `update-phase --status done --html …`. The timeline stays below it.
 
 ### Phase 3: Heimdall (verify + pre-PR review gate)
 - Check the work against the testing strategy and Definition of Done.
@@ -120,7 +141,7 @@ graph TD
   The review shows 12 lines of context, a rationale banner, per-file notes, split and unified views with word-level highlights, and line or whole-file comments.
 - **Pre-PR gate.** If tests pass and no PR exists yet, do not skip ahead. Pause at `awaiting_human`, ask the user to approve opening the PR, and arm the watcher. After approval, mark the phase active (first call), push the branch, and open the PR. Then run `update-phase --phase heimdall --status done --with-diff --pr-url "<url>"`, which stamps `data-pr-url` and the 🔗 PR badge.
 - **PR body.** Include a `### Prompt Summary` bullet list of the user's prompts. If the user has a `pr` block in their Odin config, the plugin's PreToolUse hook adds the configured label, a session telemetry section and the verbatim prompts, and asks the user to confirm the rewritten command. Never write a bare `#<digits>` for numbered rules or steps ("Rule 12", not "Rule #12"), because GitHub links those to unrelated issues.
-- **REJECT**: mark `reject`, notify with `reject`, and route the specific failures back to phase 2.
+- **REJECT**: mark `reject` (which notifies), and route the specific failures back to phase 2.
 
 ### Phase 4: Hlidskjalf (retrospective)
 - In `#hlidskjalf-judge`, review plan adherence, subagent efficiency, and what slowed the task down.
@@ -133,18 +154,18 @@ graph TD
     --proposed-diff "<concise diff or rule text>"
   ```
   Proposals stay in the state file's ledger and do not touch the feature branch. They are reviewed later through the dashboard's **🧠 Mímir Harness Audit** or `mimir-audit`, and **Approve & Spawn Delta Ticket** turns one into its own Odin task.
-- Mark done and notify.
+- Mark done.
 
 ### Phase 5: Human validation (sign-off)
 - A task that changed a git repo needs a linked PR before sign-off, unless the user waived it at the pre-PR gate.
-- Set `#human-validation` to `awaiting_human`, notify, and arm the watcher.
+- Set `#human-validation` to `awaiting_human` (which notifies), and arm the watcher.
 - **Rejection or follow-up feedback.** Whether it comes from the dashboard or in chat after phase 4 or 5, your **first** tool call is:
   ```bash
   python3 "$ODIN/odin-state.py" step-back --file "odin-states/<task-slug>.html" \
     --reason "<rejection note or follow-up summary>" \
     --root-cause "<why the previous iteration missed this>"
   ```
-  This collapses earlier iteration cards (keeping them intact), starts iteration N+1 in phase 2, and resets phases 3 and 4 to pending. Then notify `"Phase 2: Thor — Iteration N" … "phase"` and run phases 2 to 5 again.
+  This collapses earlier iteration cards (keeping them intact), starts iteration N+1 in phase 2, and resets phases 3 and 4 to pending. It notifies and logs the new iteration, so go straight on to running phases 2 to 5 again.
 - On final approval, mark `#human-validation` done.
 
 ---

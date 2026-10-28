@@ -45,6 +45,22 @@ DEFAULTS = {
     "pr": None,
     # {repo_dir, staging_dir, branch}
     "staging": {},
+    # The progress hook logs commits, subagents and these check commands
+    # (regexes searched in Bash commands) into the active task's timeline.
+    "progress": {
+        "capture": True,
+        "check_patterns": [
+            r"\bnpm (run )?(test|lint|typecheck|build)\b",
+            r"\b(pnpm|yarn|bun)( run)? (test|lint|typecheck|build)\b",
+            r"\bplaywright test\b",
+            r"\b(pytest|vitest|jest)\b",
+            r"\bpython3? -m (unittest|pytest)\b",
+            r"\b(cargo|go) (test|build)\b",
+            r"\btsc\b",
+            r"\beslint\b",
+            r"\bclaude plugin validate\b",
+        ],
+    },
 }
 
 

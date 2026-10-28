@@ -452,6 +452,17 @@
       padding: 0.2rem;
     }
   </style>
+  <style id="odin-progress-log-styles">
+    .odin-progress-log { list-style: none; margin: 14px 0 0; padding: 10px 0 0; border-top: 1px dashed var(--border, #334155); font-size: 0.84rem; }
+    .odin-progress-log > li { display: grid; grid-template-columns: 1.6em 3.4em 1fr; gap: 0.4rem; align-items: baseline; padding: 3px 0; }
+    .odin-progress-log time { color: var(--muted, #94a3b8); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; }
+    .odin-progress-log .odin-log-text { overflow-wrap: anywhere; }
+    .odin-progress-log li[data-kind="incident"] .odin-log-text,
+    .odin-progress-log li[data-outcome="fail"] .odin-log-text { color: var(--crimson, #f43f5e); }
+    .odin-progress-log details { grid-column: 3; }
+    .odin-progress-log details > summary { font-size: 0.72rem; color: var(--muted, #94a3b8); cursor: pointer; width: fit-content; }
+    .odin-progress-log details pre { white-space: pre-wrap; font-size: 0.75rem; margin: 4px 0 0; color: var(--muted, #94a3b8); }
+  </style>
 </head>
 <body data-branch="feat/<task-slug>" data-worktree="<absolute-worktree-path>" data-app-port="<app-port>" data-backend-port="<backend-port>" data-session-id="<session-id>">
   <header class="odin-header">

@@ -39,6 +39,10 @@
     "require_prompt_summary": true,
     "sanitize_hash_refs": true
   },
+  "progress": {
+    "capture": true,
+    "check_patterns": ["\\bnpm (run )?(test|lint|typecheck|build)\\b", "\\bpython3? -m (unittest|pytest)\\b", "\\bmake check\\b"]
+  },
   "staging": {
     "repo_dir": "~/code/odin",
     "staging_dir": "~/code/odin-staging",
