@@ -1,0 +1,2863 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>⚡ Odin Realm Dashboard — All Projects</title>
+  <link id="odin-favicon" rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%23f59e0b'/%3E%3Cstop offset='100%25' stop-color='%2338bdf8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpolygon points='32,3 58,18 58,46 32,61 6,46 6,18' fill='%230b1120' stroke='url(%23g)' stroke-width='4'/%3E%3Cpath d='M32 13 L47 41 H17 Z M32 23 L42 46 H22 Z' fill='none' stroke='%23f59e0b' stroke-width='3.2' stroke-linejoin='round'/%3E%3Ccircle cx='50' cy='14' r='9' fill='%2338bdf8' stroke='%230b1120' stroke-width='2.5'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg-light: #f8fafc;
+      --bg-dark: #060a12;
+      --surface-light: #ffffff;
+      --surface-dark: #0f172a;
+      --surface-elevated-light: #f1f5f9;
+      --surface-elevated-dark: #162038;
+      --text-light: #0f172a;
+      --text-dark: #e2e8f0;
+      --muted-light: #475569;
+      --muted-dark: #94a3b8;
+      --border-light: #cbd5e1;
+      --border-dark: #1e293b;
+      --gold: #f59e0b;
+      --cyan: #38bdf8;
+      --emerald: #10b981;
+      --crimson: #f43f5e;
+      --violet: #a855f7;
+
+      --bg: var(--bg-dark);
+      --surface: var(--surface-dark);
+      --surface-elevated: var(--surface-elevated-dark);
+      --text: var(--text-dark);
+      --muted: var(--muted-dark);
+      --border: var(--border-dark);
+    }
+
+    html[data-theme="light"] {
+      color-scheme: light;
+      --bg: var(--bg-light);
+      --surface: var(--surface-light);
+      --surface-elevated: var(--surface-elevated-light);
+      --text: var(--text-light);
+      --muted: var(--muted-light);
+      --border: var(--border-light);
+      --gold: #b45309;
+      --cyan: #0369a1;
+      --emerald: #047857;
+      --crimson: #be123c;
+      --violet: #7e22ce;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background:
+        radial-gradient(circle at 10% 0%, rgba(56, 189, 248, 0.13), transparent 36%),
+        radial-gradient(circle at 90% 2%, rgba(245, 158, 11, 0.11), transparent 36%),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+      padding-bottom: 4rem;
+    }
+
+    h1, h2, h3, h4, th {
+      text-wrap: balance;
+      margin-top: 0;
+      letter-spacing: -0.02em;
+    }
+
+    p, li, td {
+      text-wrap: pretty;
+    }
+
+    /* Sticky Top Header */
+    .odin-header {
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      backdrop-filter: blur(16px);
+      background: color-mix(in srgb, var(--surface) 86%, transparent);
+      border-bottom: 1px solid var(--border);
+      padding: 0.9rem 1.5rem;
+    }
+
+    .odin-header-inner {
+      max-width: 1220px;
+      margin: 0 auto;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
+
+    .brand-crest {
+      width: 42px;
+      height: 42px;
+      flex-shrink: 0;
+      filter: drop-shadow(0 0 12px rgba(245, 158, 11, 0.4));
+    }
+
+    .brand-title {
+      font-size: 1.2rem;
+      font-weight: 800;
+      margin: 0;
+      background: linear-gradient(90deg, var(--gold), var(--cyan));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .brand-subtitle {
+      font-size: 0.78rem;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--surface-elevated);
+      color: var(--text);
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 0.44rem 0.82rem;
+      border-radius: 999px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      text-decoration: none;
+      transition: all 0.16s ease;
+    }
+
+    .btn:hover {
+      border-color: var(--cyan);
+      transform: translateY(-1px);
+    }
+
+    .btn-gold {
+      border-color: rgba(245, 158, 11, 0.45);
+      background: rgba(245, 158, 11, 0.14);
+      color: var(--gold);
+    }
+
+    .btn-emerald {
+      border-color: rgba(16, 185, 129, 0.45);
+      background: rgba(16, 185, 129, 0.14);
+      color: #34d399;
+    }
+
+    .btn-cyan {
+      border-color: rgba(56, 189, 248, 0.45);
+      background: rgba(56, 189, 248, 0.14);
+      color: var(--cyan);
+    }
+
+    .sync-pill {
+      font-size: 0.74rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      padding: 0.35rem 0.7rem;
+      border-radius: 999px;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      color: var(--emerald);
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: pulse 1.8s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.25); }
+    }
+
+    .container {
+      max-width: 1220px;
+      margin: 1.75rem auto 0;
+      padding: 0 1.5rem;
+    }
+
+    /* KPI Strip */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 0.9rem;
+      margin-bottom: 1.5rem;
+    }
+
+    @media (max-width: 900px) {
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    .kpi-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 0.95rem 1.1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      box-shadow: 0 8px 24px -14px rgba(0, 0, 0, 0.4);
+    }
+
+    .kpi-label {
+      font-size: 0.74rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+
+    .kpi-value {
+      font-size: 1.65rem;
+      font-weight: 800;
+      line-height: 1.1;
+    }
+
+    /* Environment Telemetry Panel & Responsive Table (modern-web-guidance: responsive-table) */
+    .telemetry-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--cyan);
+      border-radius: 16px;
+      padding: 1.1rem 1.25rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 10px 26px -14px rgba(0, 0, 0, 0.45);
+    }
+
+    .telemetry-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+
+    .telemetry-title-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.65rem;
+    }
+
+    .telemetry-title {
+      font-size: 0.92rem;
+      font-weight: 800;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      margin: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      color: var(--text);
+    }
+
+    .telemetry-latest-summary {
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.74rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--muted);
+    }
+
+    .telemetry-body {
+      margin-top: 0.95rem;
+    }
+
+    .telemetry-body[hidden] {
+      display: none !important;
+    }
+
+    .table-wrapper {
+      overflow: auto;
+      max-inline-size: 100%;
+      max-block-size: min(500px, 80vh);
+      container-type: inline-size;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+    }
+
+    .telemetry-table {
+      border-collapse: separate;
+      border-spacing: 0;
+      width: 100%;
+      font-size: 0.82rem;
+    }
+
+    .telemetry-table thead {
+      position: sticky;
+      inset-block-start: 0;
+      z-index: 1;
+    }
+
+    .telemetry-table thead th {
+      background: var(--surface-elevated);
+      color: var(--gold);
+      font-size: 0.73rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 0.65rem 0.9rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .telemetry-table tbody th,
+    .telemetry-table tbody td {
+      padding: 0.58rem 0.9rem;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: middle;
+    }
+
+    .telemetry-table tbody tr:last-child th,
+    .telemetry-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    .telemetry-table tbody th {
+      position: sticky;
+      inset-inline-start: 0;
+      background: var(--surface);
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .telemetry-table tbody tr:hover th,
+    .telemetry-table tbody tr:hover td {
+      background: var(--surface-elevated);
+    }
+
+    .telemetry-ver-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.76rem;
+      font-weight: 600;
+      padding: 0.16rem 0.52rem;
+      border-radius: 999px;
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    .telemetry-ver-match {
+      border-color: rgba(16, 185, 129, 0.45);
+      background: rgba(16, 185, 129, 0.13);
+      color: #34d399;
+    }
+
+    .telemetry-ver-ref {
+      border-color: rgba(245, 158, 11, 0.5);
+      background: rgba(245, 158, 11, 0.15);
+      color: #fbbf24;
+    }
+
+    .telemetry-packages-details {
+      margin-top: 0.75rem;
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.55rem 0.85rem;
+      font-size: 0.76rem;
+    }
+
+    .telemetry-packages-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(245px, 1fr));
+      gap: 0.4rem;
+      margin-top: 0.55rem;
+    }
+
+    .telemetry-pkg-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.4rem;
+      padding: 0.28rem 0.55rem;
+      border-radius: 8px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.71rem;
+    }
+
+    @container (width < 600px) {
+      .telemetry-table,
+      .telemetry-table thead,
+      .telemetry-table tbody,
+      .telemetry-table tr,
+      .telemetry-table th,
+      .telemetry-table td {
+        display: block;
+      }
+
+      .telemetry-table thead {
+        display: none;
+      }
+
+      .telemetry-table tr {
+        margin-block-end: 0.85rem;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+
+      .telemetry-table tbody th {
+        position: sticky;
+        inset-block-start: 0;
+        z-index: 2;
+        background: var(--surface-elevated);
+      }
+
+      .telemetry-table td[data-label]::before {
+        content: attr(data-label) ": ";
+        font-weight: 700;
+        color: var(--muted);
+      }
+    }
+
+    /* Filter & Search Toolbar */
+    .toolbar {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 0.85rem 1rem;
+      margin-bottom: 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.85rem;
+    }
+
+    .tab-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+
+    .tab-btn {
+      appearance: none;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+      padding: 0.42rem 0.8rem;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .tab-btn:hover { color: var(--text); background: var(--surface-elevated); }
+    .tab-btn[aria-selected="true"] {
+      background: rgba(56, 189, 248, 0.16);
+      color: var(--cyan);
+      border-color: rgba(56, 189, 248, 0.45);
+    }
+
+    .filter-inputs {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.55rem;
+      flex: 1;
+      justify-content: flex-end;
+    }
+
+    .search-input, .select-input {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 0.42rem 0.9rem;
+      font-size: 0.8rem;
+      outline: none;
+    }
+
+    .search-input { min-width: 230px; }
+    .search-input:focus, .select-input:focus { border-color: var(--cyan); }
+
+    /* Project Cards Grid — Mosaic / Masonry Packing */
+    .projects-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+      column-gap: 1.15rem;
+      row-gap: 0;
+      grid-auto-rows: 1px;
+      align-items: start;
+    }
+
+    .projects-grid > .empty-state {
+      grid-column: 1 / -1;
+      grid-row-end: auto;
+    }
+
+    @media (min-width: 820px) {
+      .projects-grid[data-mosaic-pair="true"] {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @supports (grid-template-rows: masonry) {
+      .projects-grid {
+        grid-template-rows: masonry;
+        grid-auto-rows: unset;
+        row-gap: 1.15rem;
+      }
+
+      .projects-grid > .project-card {
+        grid-row-end: auto !important;
+      }
+    }
+
+    .project-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-top: 4px solid var(--muted);
+      border-radius: 16px;
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      align-self: start;
+      block-size: fit-content;
+      gap: 1rem;
+      box-shadow: 0 12px 28px -14px rgba(0, 0, 0, 0.45);
+      transition: transform 0.18s ease, border-color 0.18s ease;
+    }
+
+    .project-card:hover { transform: translateY(-2px); }
+    .project-card[data-status="done"] { border-top-color: var(--emerald); }
+    .project-card[data-status="active"] { border-top-color: var(--cyan); box-shadow: 0 0 26px -10px rgba(56, 189, 248, 0.25); }
+    .project-card[data-status="awaiting_human"] { border-top-color: var(--gold); border-color: rgba(245, 158, 11, 0.45); box-shadow: 0 0 28px -8px rgba(245, 158, 11, 0.28); }
+    .project-card[data-status="reject"] { border-top-color: var(--crimson); }
+    .project-card[data-archived="true"] { opacity: 0.82; border-style: dashed; }
+
+    .card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .badge-done, .badge-active, .badge-awaiting_human, .badge-pending, .badge-reject, .badge-archived {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      padding: 0.2rem 0.62rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .badge-done { background: rgba(16, 185, 129, 0.16); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
+    .badge-active { background: rgba(56, 189, 248, 0.16); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.45); }
+    .badge-awaiting_human { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.55); box-shadow: 0 0 12px rgba(245, 158, 11, 0.22); }
+    .badge-pending { background: rgba(148, 163, 184, 0.14); color: var(--muted); border: 1px solid rgba(148, 163, 184, 0.28); }
+    .badge-reject { background: rgba(244, 63, 94, 0.16); color: #fb7185; border: 1px solid rgba(244, 63, 94, 0.45); }
+    .badge-archived { background: rgba(245, 158, 11, 0.15); color: var(--gold); border: 1px solid rgba(245, 158, 11, 0.4); }
+
+    .workspace-pill {
+      font-size: 0.72rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--muted);
+      background: var(--surface-elevated);
+      padding: 0.18rem 0.55rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+
+    .card-title-link {
+      color: var(--text);
+      text-decoration: none;
+      font-size: 1.08rem;
+      font-weight: 700;
+      display: block;
+      margin: 0.35rem 0 0.15rem;
+    }
+
+    .card-title-link:hover { color: var(--cyan); }
+
+    .card-slug {
+      font-size: 0.75rem;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      word-break: break-all;
+    }
+
+    /* Progress Bar */
+    .progress-track {
+      height: 6px;
+      width: 100%;
+      background: var(--surface-elevated);
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 0.55rem;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--cyan), var(--emerald));
+      border-radius: 999px;
+      transition: width 0.3s ease;
+    }
+
+    /* Mini 4-Phase Bifrost Chips */
+    .phase-chips {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.45rem;
+    }
+
+    .phase-chip {
+      appearance: none;
+      text-align: left;
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.45rem 0.6rem;
+      cursor: pointer;
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+      transition: border-color 0.15s ease, transform 0.15s ease;
+    }
+
+    .phase-chip:hover {
+      border-color: var(--cyan);
+      transform: translateY(-1px);
+    }
+
+    .phase-chip[data-phase-status="done"] { border-left: 3px solid var(--emerald); }
+    .phase-chip[data-phase-status="active"] { border-left: 3px solid var(--cyan); }
+    .phase-chip[data-phase-status="awaiting_human"] { border-left: 3px solid var(--gold); border-color: rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.1); }
+    .phase-chip[data-phase-status="reject"] { border-left: 3px solid var(--crimson); }
+    .phase-chip[data-phase-status="pending"] { border-left: 3px solid var(--muted); }
+
+    .chip-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+
+    .chip-summary {
+      font-size: 0.7rem;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .card-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .empty-state {
+      grid-column: 1 / -1;
+      text-align: center;
+      padding: 3.5rem 1.5rem;
+      background: var(--surface);
+      border: 1px dashed var(--border);
+      border-radius: 16px;
+      color: var(--muted);
+    }
+
+    /* Modal Dialog (modern-web-guidance: light-dismiss-a-dialog) */
+    dialog#update-dialog,
+    dialog#mimir-dialog,
+    dialog#staging-dialog {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-top: 4px solid var(--gold);
+      border-radius: 18px;
+      padding: 1.5rem;
+      width: min(540px, calc(100vw - 2rem));
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+    }
+
+    dialog#update-dialog::backdrop,
+    dialog#mimir-dialog::backdrop,
+    dialog#staging-dialog::backdrop {
+      background-color: rgba(3, 7, 18, 0.68);
+      backdrop-filter: blur(4px);
+    }
+
+    .form-row {
+      margin-bottom: 0.95rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .form-row label {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .form-input, .form-select, .form-textarea {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 0.55rem 0.75rem;
+      font-size: 0.86rem;
+      font-family: inherit;
+    }
+
+    .phase-select-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.65rem;
+      margin-bottom: 0.9rem;
+    }
+
+    .human-validation-panel {
+      background: color-mix(in srgb, var(--surface-elevated) 85%, transparent);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      border-left: 4px solid var(--gold);
+      border-radius: 12px;
+      padding: 0.85rem 0.95rem;
+      margin-bottom: 0.95rem;
+      transition: border-color 0.2s ease, background-color 0.2s ease;
+    }
+
+    .human-validation-panel[data-human-state="reject"] {
+      border-color: rgba(244, 63, 94, 0.55);
+      border-left-color: var(--crimson);
+      background: rgba(244, 63, 94, 0.08);
+    }
+
+    .human-validation-panel[data-human-state="done"] {
+      border-color: rgba(16, 185, 129, 0.5);
+      border-left-color: var(--emerald);
+      background: rgba(16, 185, 129, 0.07);
+    }
+
+    .btn-crimson {
+      border-color: rgba(244, 63, 94, 0.45);
+      background: rgba(244, 63, 94, 0.14);
+      color: #fb7185;
+    }
+
+    /* Required Field Feedback (modern-web-guidance: required-field-feedback) */
+    .error-msg {
+      display: none;
+      color: #fb7185;
+      font-size: 0.78rem;
+      font-weight: 600;
+      margin-top: 0.25rem;
+    }
+
+    .form-input:user-invalid,
+    .form-textarea:user-invalid,
+    .form-input.user-invalid-fallback,
+    .form-textarea.user-invalid-fallback {
+      border-color: var(--crimson);
+      background-color: rgba(244, 63, 94, 0.12);
+    }
+
+    .form-input:user-invalid + .error-msg,
+    .form-textarea:user-invalid + .error-msg,
+    .form-input.user-invalid-fallback + .error-msg,
+    .form-textarea.user-invalid-fallback + .error-msg {
+      display: block;
+    }
+
+    .form-textarea:required:user-valid {
+      border-color: var(--emerald);
+    }
+
+    .human-chip-wide {
+      grid-column: 1 / -1;
+      background: linear-gradient(90deg, rgba(245, 158, 11, 0.08), var(--surface-elevated));
+    }
+
+    .human-reject-banner {
+      margin-top: 0.55rem;
+      padding: 0.5rem 0.7rem;
+      border-radius: 8px;
+      border-left: 3px solid var(--crimson);
+      background: rgba(244, 63, 94, 0.12);
+      color: #fda4af;
+      font-size: 0.76rem;
+      line-height: 1.4;
+    }
+
+    .open-questions-banner {
+      margin-top: 0.55rem;
+      padding: 0.55rem 0.75rem;
+      border-radius: 10px;
+      border: 1px solid rgba(245, 158, 11, 0.45);
+      border-left: 4px solid var(--gold);
+      background: rgba(245, 158, 11, 0.12);
+      color: #fde68a;
+      font-size: 0.75rem;
+      line-height: 1.42;
+    }
+
+    .open-questions-banner ol {
+      margin: 0.35rem 0 0;
+      padding-left: 1.15rem;
+    }
+
+    .open-questions-banner li {
+      margin-bottom: 0.25rem;
+    }
+
+    .collision-banner {
+      margin-top: 0.55rem;
+      padding: 0.45rem 0.7rem;
+      border-radius: 8px;
+      border-left: 3px solid var(--gold);
+      background: rgba(245, 158, 11, 0.14);
+      color: #fcd34d;
+      font-size: 0.74rem;
+      line-height: 1.35;
+    }
+
+    /* Inline Mímir Harness Delta Disclosure on Project Cards (modern-web-guidance: search-hidden-content) */
+    details.card-delta-banner {
+      margin-top: 0.6rem;
+      border-radius: 10px;
+      border: 1px solid rgba(168, 85, 247, 0.45);
+      border-left: 4px solid #a855f7;
+      background: rgba(168, 85, 247, 0.1);
+      padding: 0.55rem 0.75rem;
+      font-size: 0.75rem;
+      line-height: 1.42;
+    }
+
+    details.card-delta-banner[data-has-pending="true"] {
+      border-color: rgba(245, 158, 11, 0.55);
+      border-left-color: var(--gold);
+      background: linear-gradient(135deg, rgba(168, 85, 247, 0.14), rgba(245, 158, 11, 0.1));
+    }
+
+    details.card-delta-banner > summary {
+      cursor: pointer;
+      font-weight: 700;
+      color: #e9d5ff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.45rem;
+      list-style: none;
+    }
+
+    details.card-delta-banner > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .card-delta-list {
+      max-block-size: 260px;
+      overflow-y: auto;
+      scrollbar-gutter: stable;
+      overscroll-behavior: contain;
+      padding-inline-end: 0.25rem;
+    }
+
+    .card-delta-item {
+      margin-top: 0.5rem;
+      padding-top: 0.5rem;
+      border-top: 1px solid rgba(148, 163, 184, 0.2);
+    }
+
+    .card-delta-diff {
+      margin: 0.38rem 0;
+      padding: 0.45rem 0.6rem;
+      border-radius: 7px;
+      background: rgba(2, 6, 23, 0.75);
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      color: #bae6fd;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.69rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+
+    .env-pills-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.38rem;
+      margin-top: 0.55rem;
+    }
+
+    .env-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.7rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      padding: 0.18rem 0.52rem;
+      border-radius: 999px;
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+
+    .env-pill-branch {
+      border-color: rgba(168, 85, 247, 0.4);
+      background: rgba(168, 85, 247, 0.1);
+      color: #d8b4fe;
+    }
+
+    .env-pill-worktree {
+      border-color: rgba(56, 189, 248, 0.35);
+      background: rgba(56, 189, 248, 0.08);
+      color: #bae6fd;
+    }
+
+    .env-pill-live {
+      border-color: rgba(16, 185, 129, 0.48);
+      background: rgba(16, 185, 129, 0.14);
+      color: #34d399;
+      font-weight: 700;
+    }
+
+    .env-pill-action {
+      appearance: none;
+      border: none;
+      background: rgba(244, 63, 94, 0.22);
+      color: #fda4af;
+      border-radius: 999px;
+      padding: 0.08rem 0.38rem;
+      font-size: 0.65rem;
+      font-weight: 700;
+      cursor: pointer;
+      margin-left: 0.15rem;
+      transition: background 0.15s ease;
+    }
+
+    .env-pill-action:hover {
+      background: rgba(244, 63, 94, 0.42);
+      color: #fff;
+    }
+
+    .env-pill-iter {
+      border-color: rgba(56, 189, 248, 0.45);
+      background: rgba(56, 189, 248, 0.12);
+      color: #7dd3fc;
+      font-weight: 700;
+    }
+
+    .env-pill-delta {
+      border-color: rgba(245, 158, 11, 0.55);
+      background: rgba(245, 158, 11, 0.15);
+      color: #fcd34d;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s ease, transform 0.15s ease;
+    }
+
+    .env-pill-delta:hover {
+      background: rgba(245, 158, 11, 0.28);
+      transform: translateY(-1px);
+    }
+
+    .mimir-kpi-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+      gap: 0.65rem;
+      margin-bottom: 1rem;
+    }
+
+    .mimir-kpi-box {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.65rem 0.8rem;
+    }
+
+    .mimir-delta-card {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--gold);
+      border-radius: 12px;
+      padding: 0.9rem 1rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .mimir-delta-card[data-priority="p0"] {
+      border-left-color: var(--crimson);
+    }
+
+    .mimir-delta-card[data-status="applied"] {
+      border-left-color: var(--emerald);
+      opacity: 0.82;
+    }
+
+    .mimir-diff-pre {
+      margin: 0.55rem 0;
+      padding: 0.65rem 0.8rem;
+      border-radius: 8px;
+      background: rgba(2, 6, 23, 0.75);
+      border: 1px solid var(--border);
+      color: #e2e8f0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.75rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* Top-Layer Manual Popover Toast */
+    .odin-toast[popover] {
+      position: fixed;
+      inset: 1.25rem 1.25rem auto auto;
+      margin: 0;
+      width: min(380px, calc(100vw - 2.5rem));
+      background: var(--surface-elevated);
+      color: var(--text);
+      border: 1px solid var(--gold);
+      border-left: 5px solid var(--gold);
+      border-radius: 14px;
+      padding: 0.95rem 1.1rem;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.55);
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem;
+      opacity: 0;
+      transform: translateY(-10px) scale(0.97);
+      transition: opacity 0.22s ease, transform 0.22s ease, overlay 0.22s allow-discrete, display 0.22s allow-discrete;
+    }
+
+    .odin-toast[popover]:popover-open {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+
+    @starting-style {
+      .odin-toast[popover]:popover-open {
+        opacity: 0;
+        transform: translateY(-10px) scale(0.97);
+      }
+    }
+
+    .odin-toast + .odin-toast { margin-top: 4.5rem; }
+
+    .toast-close {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 1rem;
+      line-height: 1;
+      padding: 0.2rem;
+    }
+
+    /* Light-Mode WCAG AA/AAA Contrast Overrides (modern-web-guidance: color, dark-mode) */
+    html[data-theme="light"] .open-questions-banner {
+      background: rgba(245, 158, 11, 0.14);
+      border-color: rgba(180, 83, 9, 0.5);
+      border-left-color: var(--gold);
+      color: #78350f;
+    }
+
+    html[data-theme="light"] .open-questions-banner strong,
+    html[data-theme="light"] .open-questions-banner code {
+      color: #92400e;
+    }
+
+    html[data-theme="light"] .collision-banner {
+      background: rgba(245, 158, 11, 0.16);
+      border-left-color: var(--gold);
+      color: #78350f;
+    }
+
+    html[data-theme="light"] .badge-awaiting_human,
+    html[data-theme="light"] .telemetry-ver-ref,
+    html[data-theme="light"] .env-pill-delta {
+      background: rgba(245, 158, 11, 0.18);
+      border-color: rgba(180, 83, 9, 0.55);
+      color: #92400e;
+    }
+
+    html[data-theme="light"] .btn-gold,
+    html[data-theme="light"] .badge-archived {
+      background: rgba(245, 158, 11, 0.15);
+      border-color: rgba(180, 83, 9, 0.5);
+      color: #92400e;
+    }
+
+    html[data-theme="light"] .badge-done,
+    html[data-theme="light"] .btn-emerald,
+    html[data-theme="light"] .telemetry-ver-match,
+    html[data-theme="light"] .env-pill-live {
+      background: rgba(16, 185, 129, 0.15);
+      border-color: rgba(4, 120, 87, 0.48);
+      color: #065f46;
+    }
+
+    html[data-theme="light"] .badge-active,
+    html[data-theme="light"] .btn-cyan,
+    html[data-theme="light"] .env-pill-iter,
+    html[data-theme="light"] .env-pill-worktree {
+      background: rgba(14, 165, 233, 0.14);
+      border-color: rgba(3, 105, 161, 0.45);
+      color: #075985;
+    }
+
+    html[data-theme="light"] .badge-reject,
+    html[data-theme="light"] .btn-crimson,
+    html[data-theme="light"] .human-reject-banner,
+    html[data-theme="light"] .env-pill-action {
+      background: rgba(244, 63, 94, 0.14);
+      border-color: rgba(190, 18, 60, 0.45);
+      color: #9f1239;
+    }
+
+    html[data-theme="light"] .error-msg {
+      color: #be123c;
+    }
+
+    html[data-theme="light"] .env-pill-branch,
+    html[data-theme="light"] details.card-delta-banner > summary {
+      color: #6b21a8;
+    }
+
+    html[data-theme="light"] details.card-delta-banner {
+      background: rgba(168, 85, 247, 0.08);
+      border-color: rgba(126, 34, 206, 0.4);
+    }
+
+    html[data-theme="light"] details.card-delta-banner[data-has-pending="true"] {
+      border-color: rgba(180, 83, 9, 0.5);
+      background: linear-gradient(135deg, rgba(168, 85, 247, 0.1), rgba(245, 158, 11, 0.12));
+    }
+  </style>
+</head>
+<body>
+  <header class="odin-header">
+    <div class="odin-header-inner">
+      <div class="brand">
+        <svg class="brand-crest" viewBox="0 0 64 64" aria-hidden="true">
+          <defs>
+            <linearGradient id="odinGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#f59e0b"/>
+              <stop offset="100%" stop-color="#38bdf8"/>
+            </linearGradient>
+          </defs>
+          <polygon points="32,3 58,18 58,46 32,61 6,46 6,18" fill="#0b1120" stroke="url(#odinGrad)" stroke-width="3.5"/>
+          <path d="M32 13 L47 41 H17 Z M32 23 L42 46 H22 Z" fill="none" stroke="#f59e0b" stroke-width="3" stroke-linejoin="round"/>
+        </svg>
+        <div>
+          <h1 class="brand-title">ODIN ALLFATHER — REALM COMMAND DASHBOARD</h1>
+          <div class="brand-subtitle">Multi-Workspace State Tracker • <span id="last-sync-label">Syncing...</span></div>
+        </div>
+      </div>
+      <div class="controls">
+        <span class="sync-pill"><span class="pulse-dot"></span> Live Sync (3s)</span>
+        <button type="button" class="btn" id="toggle-pause-btn" title="Pause or Resume live Odin reactive watchers">⏸️ Pause Watchers</button>
+        <button type="button" class="btn" id="open-staging-btn" style="border-color:rgba(168,85,247,0.55);background:rgba(168,85,247,0.16);color:var(--violet);font-weight:700;" title="Pause live watchers and snapshot the Odin repo &amp; states into the staging worktree">🧪 Staging (:8789)</button>
+        <button type="button" class="btn btn-cyan" id="open-mimir-btn" title="Open Mímir &amp; Kvasir Harness Feedback Loop Audit">🧠 Mímir Harness Audit <span id="mimir-badge-count" style="padding:0.06rem 0.42rem;border-radius:999px;background:rgba(245,158,11,0.22);color:var(--gold);font-size:0.7rem;font-weight:800;">0</span></button>
+        <button type="button" class="btn btn-gold" id="archive-done-btn" title="Move all completed (DONE) projects to odin-states/archive/">📦 Archive All Completed</button>
+        <button type="button" class="btn" id="enable-alerts-btn">🔔 Enable Alerts &amp; Horn</button>
+        <button type="button" class="btn" id="mute-btn">🔊 Sound: ON</button>
+        <button type="button" class="btn" id="theme-btn">☀️ Theme</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section id="staging-mode-banner" aria-label="Staging Environment Mode Banner" style="display:none;margin-bottom:1.5rem;padding:0.95rem 1.25rem;border-radius:14px;border:1px solid rgba(168,85,247,0.65);border-left:5px solid var(--violet);background:linear-gradient(90deg,rgba(168,85,247,0.18),rgba(56,189,248,0.08));box-shadow:0 10px 25px rgba(0,0,0,0.14);align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.85rem;">
+      <div>
+        <div style="display:flex;align-items:center;gap:0.55rem;flex-wrap:wrap;">
+          <span style="display:inline-flex;align-items:center;gap:0.35rem;padding:0.22rem 0.7rem;border-radius:999px;font-size:0.75rem;font-weight:800;letter-spacing:0.04em;background:rgba(168,85,247,0.22);border:1px solid rgba(168,85,247,0.65);color:var(--violet);">🧪 STAGING (:8789) — SANDBOX MODE</span>
+          <span style="font-size:0.78rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);">branch <code class="odin-staging-branch">staging/odin-8789</code> &bull; <code class="odin-staging-dir">staging worktree</code></span>
+        </div>
+        <div style="font-size:0.84rem;color:var(--text);margin-top:0.35rem;">Project navigation stays on <code>:8789</code> and sandbox test clicks never overwrite live <code>:8788</code> state files. Promote verified Odin code changes to merge <code>staging/odin-8789</code> into <code>main</code>.</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+        <button type="button" class="btn" id="banner-resnapshot-staging-btn" style="border-color:rgba(168,85,247,0.55);background:rgba(168,85,247,0.14);color:var(--violet);font-weight:700;">🔄 Reset/Re-Snapshot from Live (:8788)</button>
+        <button type="button" class="btn btn-emerald" id="banner-promote-staging-btn" style="font-weight:700;">🚀 Promote to Live (:8788)</button>
+        <a href="http://127.0.0.1:8788/" class="btn" style="text-decoration:none;">🏛️ Open Live (:8788) ↗</a>
+      </div>
+    </section>
+
+    <section class="kpi-grid" aria-label="Project Telemetry">
+      <div class="kpi-card">
+        <span class="kpi-label">⚡ Active In-Flight</span>
+        <span class="kpi-value" id="kpi-active" style="color:var(--cyan);">0</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-label">✅ Completed (Unarchived)</span>
+        <span class="kpi-value" id="kpi-done" style="color:var(--emerald);">0</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-label">❓ Open Questions / 🚨 Reject</span>
+        <span class="kpi-value" id="kpi-reject" style="color:var(--gold);">0</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-label">📦 Archived Vault</span>
+        <span class="kpi-value" id="kpi-archived" style="color:var(--gold);">0</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-label">🌐 Total Tracked</span>
+        <span class="kpi-value" id="kpi-total">0</span>
+      </div>
+    </section>
+
+    <section class="telemetry-panel" id="telemetry-panel" aria-label="Environment Telemetry" hidden>
+      <div class="telemetry-header">
+        <div class="telemetry-title-wrap">
+          <h2 class="telemetry-title" id="telemetry-title">🛰️ Environment Telemetry</h2>
+          <div class="telemetry-latest-summary" id="telemetry-latest-summary">
+            <span>Fetching telemetry...</span>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:0.45rem;flex-wrap:wrap;">
+          <button type="button" class="btn btn-cyan" id="refresh-telemetry-btn" title="Run the configured telemetry command now">🔄 Refresh</button>
+          <button type="button" class="btn" id="toggle-telemetry-btn" aria-expanded="true" aria-controls="telemetry-body">▾ Hide Matrix</button>
+        </div>
+      </div>
+      <div class="telemetry-body" id="telemetry-body">
+        <div class="table-wrapper">
+          <table class="telemetry-table" aria-label="Environment Telemetry">
+            <thead id="telemetry-thead"></thead>
+            <tbody id="telemetry-tbody">
+              <tr>
+                <td style="color:var(--muted);">⏳ Loading...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <div class="toolbar">
+      <div class="tab-group" role="tablist" aria-label="Filter projects by state">
+        <button type="button" class="tab-btn" role="tab" data-filter="active_realm" aria-selected="true">🔥 Active Realm</button>
+        <button type="button" class="tab-btn" role="tab" data-filter="awaiting_human" aria-selected="false">❓ Open Questions</button>
+        <button type="button" class="tab-btn" role="tab" data-filter="in_progress" aria-selected="false">⚡ In Progress</button>
+        <button type="button" class="tab-btn" role="tab" data-filter="done" aria-selected="false">✅ Completed</button>
+        <button type="button" class="tab-btn" role="tab" data-filter="reject" aria-selected="false">🚨 Rejected</button>
+        <button type="button" class="tab-btn" role="tab" data-filter="archived" aria-selected="false">📦 Archived</button>
+        <button type="button" class="tab-btn" role="tab" data-filter="all" aria-selected="false">🌐 All</button>
+      </div>
+      <div class="filter-inputs">
+        <select id="sort-select" class="select-input" aria-label="Sort projects">
+          <option value="open_first" selected>🔥 Sort: Open First</option>
+          <option value="recent">🕒 Sort: Recently Updated</option>
+          <option value="alpha">🔤 Sort: Title (A–Z)</option>
+        </select>
+        <select id="workspace-select" class="select-input" aria-label="Filter by workspace">
+          <option value="all">All Workspaces</option>
+        </select>
+        <input type="search" id="search-input" class="search-input" placeholder="Search title, slug, branch, port, or notes...">
+      </div>
+    </div>
+
+    <div id="projects-grid" class="projects-grid" aria-live="polite"></div>
+  </main>
+
+  <!-- Light-Dismiss Update Project Modal Dialog -->
+  <dialog id="update-dialog" closedby="any" aria-labelledby="update-dialog-title">
+    <form id="update-form" method="dialog" novalidate>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+        <h2 id="update-dialog-title" style="margin:0;font-size:1.15rem;color:var(--gold);">✏️ Update Odin Project</h2>
+        <button type="button" class="btn" id="close-dialog-btn">✕</button>
+      </div>
+      <input type="hidden" id="edit-project-id">
+      <div class="form-row">
+        <label for="edit-title">Project Title *</label>
+        <input type="text" id="edit-title" class="form-input" required aria-errormessage="title-error">
+        <div id="title-error" class="error-msg"><span aria-hidden="true">❌</span> Project title is required.</div>
+      </div>
+      <div class="phase-select-grid">
+        <div class="form-row" style="margin:0;">
+          <label for="edit-huginn">🪶 I. Huginn Plan</label>
+          <select id="edit-huginn" class="form-select">
+            <option value="pending">PENDING</option>
+            <option value="active">ACTIVE</option>
+            <option value="awaiting_human">❓ OPEN QUESTIONS — AWAITING HUMAN</option>
+            <option value="done">DONE</option>
+            <option value="reject">REJECT</option>
+          </select>
+        </div>
+        <div class="form-row" style="margin:0;">
+          <label for="edit-thor">⚡ II. Thor &amp; Valkyries</label>
+          <select id="edit-thor" class="form-select">
+            <option value="pending">PENDING</option>
+            <option value="active">ACTIVE</option>
+            <option value="awaiting_human">❓ OPEN QUESTIONS — AWAITING HUMAN</option>
+            <option value="done">DONE</option>
+            <option value="reject">REJECT</option>
+          </select>
+        </div>
+        <div class="form-row" style="margin:0;">
+          <label for="edit-heimdall">🛡️ III. Heimdall Gate</label>
+          <select id="edit-heimdall" class="form-select">
+            <option value="pending">PENDING</option>
+            <option value="active">ACTIVE</option>
+            <option value="awaiting_human">❓ OPEN QUESTIONS — AWAITING HUMAN</option>
+            <option value="done">DONE</option>
+            <option value="reject">REJECT</option>
+          </select>
+        </div>
+        <div class="form-row" style="margin:0;">
+          <label for="edit-hlidskjalf">👁️ IV. Hlidskjalf Retro</label>
+          <select id="edit-hlidskjalf" class="form-select">
+            <option value="pending">PENDING</option>
+            <option value="active">ACTIVE</option>
+            <option value="awaiting_human">❓ OPEN QUESTIONS — AWAITING HUMAN</option>
+            <option value="done">DONE</option>
+            <option value="reject">REJECT</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Phase V: Human Validation (Sign-Off / Reject with Note) -->
+      <div class="human-validation-panel" id="human-validation-panel" data-human-state="pending">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.55rem;">
+          <label for="edit-human-validation" style="font-size:0.8rem;font-weight:800;color:var(--gold);text-transform:uppercase;letter-spacing:0.04em;">👑 V. Human Validation (Sign-Off / Reject)</label>
+          <div style="display:flex;gap:0.35rem;">
+            <button type="button" class="btn btn-emerald" id="quick-human-approve-btn" style="padding:0.25rem 0.6rem;font-size:0.72rem;">✅ Approve</button>
+            <button type="button" class="btn btn-crimson" id="quick-human-reject-btn" style="padding:0.25rem 0.6rem;font-size:0.72rem;">🚨 Reject</button>
+          </div>
+        </div>
+        <div class="form-row" style="margin-bottom:0.65rem;">
+          <select id="edit-human-validation" class="form-select">
+            <option value="pending">PENDING — Awaiting Human Validation</option>
+            <option value="awaiting_human">AWAITING SIGN-OFF — Ready for Human Review</option>
+            <option value="active">ACTIVE — In Human Review</option>
+            <option value="done">DONE — Approved by Human</option>
+            <option value="reject">REJECT — Rejected by Human (Requires Note)</option>
+          </select>
+        </div>
+        <div class="form-row" style="margin:0;">
+          <label for="edit-human-note" id="edit-human-note-label">Human Validation / Rejection Note <span id="human-note-req-badge" style="font-weight:600;text-transform:none;">(required on REJECT)</span></label>
+          <textarea id="edit-human-note" class="form-textarea" rows="2" placeholder="Explain why this project is rejected or add sign-off feedback..." aria-errormessage="human-note-error"></textarea>
+          <div id="human-note-error" class="error-msg">
+            <span aria-hidden="true">❌</span> Please provide a note explaining why this is rejected.
+          </div>
+        </div>
+      </div>
+
+      <!-- Git Worktree & Port Isolation Panel -->
+      <details style="margin-bottom:0.75rem;" open>
+        <summary style="cursor:pointer;font-size:0.76rem;color:var(--cyan);font-weight:700;">🌿 Git Worktree &amp; Instance Port Isolation</summary>
+        <div style="margin-top:0.6rem;padding:0.75rem;border-radius:10px;background:var(--surface-elevated);border:1px solid var(--border);">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.55rem;gap:0.5rem;flex-wrap:wrap;">
+            <span style="font-size:0.72rem;color:var(--muted);">Assign isolated branch, worktree &amp; dev-server ports</span>
+            <button type="button" class="btn btn-cyan" id="auto-allocate-env-btn" style="padding:0.22rem 0.6rem;font-size:0.72rem;">⚡ Auto-Assign Free Port &amp; Worktree</button>
+          </div>
+          <div class="phase-select-grid" style="margin-bottom:0.55rem;">
+            <div class="form-row" style="margin:0;">
+              <label for="edit-branch">🌿 Git Branch</label>
+              <input type="text" id="edit-branch" class="form-input" placeholder="e.g. feat/my-task">
+            </div>
+            <div class="form-row" style="margin:0;">
+              <label for="edit-worktree">🗂️ Worktree Path</label>
+              <input type="text" id="edit-worktree" class="form-input" placeholder="/path/to/your/repo">
+            </div>
+            <div class="form-row" style="margin:0;">
+              <label for="edit-app-port">🔌 App Port</label>
+              <input type="number" id="edit-app-port" class="form-input" placeholder="8080" min="8080" max="8099">
+            </div>
+            <div class="form-row" style="margin:0;">
+              <label for="edit-backend-port">🧩 Backend Port</label>
+              <input type="number" id="edit-backend-port" class="form-input" placeholder="3001" min="1024" max="65535">
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <details style="margin-bottom:0.75rem;">
+        <summary style="cursor:pointer;font-size:0.76rem;color:var(--muted);font-weight:600;">➕ Append Technical Note to Phase I–IV (Optional)</summary>
+        <div class="form-row" style="margin-top:0.55rem;margin-bottom:0;">
+          <select id="edit-note-phase" class="form-select" style="margin-bottom:0.4rem;">
+            <option value="huginn-plan">Append to Phase I: Huginn</option>
+            <option value="thor-execution" selected>Append to Phase II: Thor &amp; Valkyries</option>
+            <option value="heimdall-validation">Append to Phase III: Heimdall</option>
+            <option value="hlidskjalf-judge">Append to Phase IV: Hlidskjalf</option>
+          </select>
+          <textarea id="edit-note" class="form-textarea" rows="2" placeholder="Add phase-specific technical note..."></textarea>
+        </div>
+      </details>
+
+      <div style="display:flex;justify-content:flex-end;gap:0.55rem;margin-top:1.1rem;">
+        <button type="button" class="btn" id="cancel-dialog-btn">Cancel</button>
+        <button type="submit" class="btn btn-gold">💾 Save Changes</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Mímir & Kvasir Harness Feedback Loop Audit Dialog -->
+  <dialog id="mimir-dialog" closedby="any" aria-labelledby="mimir-dialog-title" style="width:min(900px, calc(100vw - 2rem));max-height:88vh;overflow-y:auto;">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.65rem;margin-bottom:0.85rem;">
+      <div>
+        <h2 id="mimir-dialog-title" style="margin:0;font-size:1.15rem;color:var(--gold);">🧠 Mímir &amp; Kvasir — Harness Feedback Loop Audit</h2>
+        <div style="font-size:0.76rem;color:var(--muted);margin-top:0.18rem;">Aggregates Phase IV <code>harness_delta_proposals</code> &amp; step-back telemetry across all Odin state ledgers</div>
+      </div>
+      <div style="display:flex;gap:0.45rem;align-items:center;flex-wrap:wrap;">
+        <select id="mimir-status-filter" class="select-input" style="font-size:0.74rem;padding:0.28rem 0.55rem;" aria-label="Filter proposals by status">
+          <option value="all">All Proposals</option>
+          <option value="pending" selected>Pending Only</option>
+          <option value="applied">Applied</option>
+          <option value="dismissed">Dismissed</option>
+        </select>
+        <button type="button" class="btn btn-cyan" id="refresh-mimir-btn" style="padding:0.28rem 0.65rem;font-size:0.74rem;">🔄 Refresh Audit</button>
+        <button type="button" class="btn btn-gold" id="copy-all-mimir-prompt-btn" style="padding:0.28rem 0.65rem;font-size:0.74rem;" title="Copy a Claude Code prompt to apply all pending harness proposals">🤖 Copy Mímir Apply Prompt</button>
+        <button type="button" class="btn" id="close-mimir-btn" style="padding:0.28rem 0.65rem;font-size:0.74rem;">✕</button>
+      </div>
+    </div>
+
+    <div class="mimir-kpi-row" id="mimir-kpi-row">
+      <div class="mimir-kpi-box">
+        <div class="kpi-label">📊 Projects Audited</div>
+        <div class="kpi-value" id="mimir-kpi-projects" style="font-size:1.25rem;color:var(--cyan);">0</div>
+      </div>
+      <div class="mimir-kpi-box">
+        <div class="kpi-label">🔄 Multi-Iteration (&gt;1)</div>
+        <div class="kpi-value" id="mimir-kpi-multi" style="font-size:1.25rem;color:var(--gold);">0</div>
+      </div>
+      <div class="mimir-kpi-box">
+        <div class="kpi-label">🧠 Pending Harness Deltas</div>
+        <div class="kpi-value" id="mimir-kpi-pending" style="font-size:1.25rem;color:var(--crimson);">0</div>
+      </div>
+      <div class="mimir-kpi-box">
+        <div class="kpi-label">✅ Applied Deltas</div>
+        <div class="kpi-value" id="mimir-kpi-applied" style="font-size:1.25rem;color:var(--emerald);">0</div>
+      </div>
+    </div>
+
+    <div id="mimir-deltas-container" aria-live="polite">
+      <div style="color:var(--muted);font-size:0.84rem;padding:1rem 0;">Loading Mímir &amp; Kvasir telemetry...</div>
+    </div>
+  </dialog>
+
+  <!-- Light-Dismiss Staging (:8789) Snapshot Dialog -->
+  <dialog id="staging-dialog" closedby="any" aria-labelledby="staging-dialog-title" style="max-width:680px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;margin-bottom:0.85rem;">
+      <div>
+        <h2 id="staging-dialog-title" style="margin:0;font-size:1.12rem;color:var(--violet);">🧪 Odin Staging Environment (:8789) Snapshot Ready</h2>
+        <div style="font-size:0.76rem;color:var(--muted);margin-top:0.15rem;">Isolated Git Worktree at <code class="odin-staging-dir">staging worktree</code> • Live <code>:8788</code> Watchers Paused</div>
+      </div>
+      <button type="button" class="btn" id="close-staging-btn" style="padding:0.28rem 0.65rem;font-size:0.74rem;">✕</button>
+    </div>
+    <p style="font-size:0.83rem;color:var(--text);margin:0 0 0.7rem 0;line-height:1.5;">
+      Your active Odin code and <code>odin-states/</code> have been snapshotted to <code>:8789</code>. Paste the prompt below into a <strong>new Claude Code session</strong> to debug or upgrade Odin without interrupting your in-flight jobs:
+    </p>
+    <textarea id="staging-prompt-textarea" class="form-textarea" readonly style="min-height:165px;font-family:monospace;font-size:0.78rem;color:var(--cyan);margin-bottom:0.85rem;"></textarea>
+    <div style="display:flex;justify-content:flex-start;align-items:center;flex-wrap:wrap;gap:0.5rem;">
+      <button type="button" class="btn btn-cyan" id="copy-staging-prompt-btn">📋 Copy Debug Prompt</button>
+      <a id="staging-open-link" href="http://127.0.0.1:8789/" target="_blank" rel="noopener" class="btn" style="text-decoration:none;border-color:rgba(168,85,247,0.55);color:var(--violet);">🌐 Open Staging (:8789) ↗</a>
+    </div>
+  </dialog>
+
+  <div id="odin-toast" class="odin-toast" popover="manual" role="status" aria-live="polite">
+    <div>
+      <strong id="odin-toast-title" style="display:block;color:var(--gold);font-size:0.88rem;">⚡ Odin Realm Update</strong>
+      <span id="odin-toast-body" style="font-size:0.82rem;color:var(--text);">Dashboard synchronized.</span>
+    </div>
+    <button type="button" class="toast-close" popovertarget="odin-toast" popovertargetaction="hide" aria-label="Close notification">✕</button>
+  </div>
+
+  <script>
+    (() => {
+      const API_BASE = location.protocol.startsWith("http") ? "" : "http://127.0.0.1:8788";
+      const MUTE_KEY = "odin_sound_muted";
+      const THEME_KEY = "odin_ui_theme";
+      const SNAPSHOT_KEY = "odin_dashboard_snapshot";
+
+      let allProjects = [];
+      let mimirAuditData = null;
+      let activeFilter = "active_realm";
+      let activeWorkspace = "all";
+      let activeSort = "open_first";
+      let searchQuery = "";
+      let isMuted = localStorage.getItem(MUTE_KEY) === "true";
+      let audioCtx = null;
+      let toastTimer = null;
+
+      function ensureAudio() {
+        if (!audioCtx) {
+          const Ctx = window.AudioContext || window.webkitAudioContext;
+          if (Ctx) audioCtx = new Ctx();
+        }
+        if (audioCtx && audioCtx.state === "suspended") {
+          audioCtx.resume().catch(() => {});
+        }
+        return audioCtx;
+      }
+
+      function playGjallarhorn(kind = "phase") {
+        if (isMuted) return;
+        const ctx = ensureAudio();
+        if (!ctx) return;
+        const now = ctx.currentTime;
+        const notes = kind === "done"
+          ? [523.25, 659.25, 783.99, 1046.5]
+          : kind === "reject"
+          ? [220, 185]
+          : kind === "awaiting_human"
+          ? [587.33, 440, 587.33]
+          : [440, 659.25];
+
+        notes.forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = kind === "reject" ? "sawtooth" : "triangle";
+          osc.frequency.setValueAtTime(freq, now + i * 0.11);
+          gain.gain.setValueAtTime(0.0001, now + i * 0.11);
+          gain.gain.exponentialRampToValueAtTime(0.18, now + i * 0.11 + 0.025);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.11 + 0.42);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now + i * 0.11);
+          osc.stop(now + i * 0.11 + 0.45);
+        });
+      }
+
+      function showToast(title, body) {
+        const toast = document.getElementById("odin-toast");
+        if (!toast) return;
+        document.getElementById("odin-toast-title").textContent = title;
+        document.getElementById("odin-toast-body").textContent = body;
+        if (typeof toast.showPopover === "function") {
+          try { toast.hidePopover(); } catch {}
+          try { toast.showPopover(); } catch {}
+          clearTimeout(toastTimer);
+          toastTimer = setTimeout(() => {
+            try { toast.hidePopover(); } catch {}
+          }, 4500);
+        }
+      }
+
+      function notifyUser(title, body, kind = "phase") {
+        playGjallarhorn(kind);
+        showToast(title, body);
+        if ("Notification" in window && Notification.permission === "granted") {
+          try {
+            const n = new Notification(title, {
+              body,
+              icon: document.getElementById("odin-favicon")?.href,
+              tag: "odin-dashboard-" + Date.now()
+            });
+            n.onclick = () => window.focus();
+          } catch {}
+        }
+      }
+
+      function relativeTime(mtimeSec) {
+        const diff = Math.max(0, Math.floor(Date.now() / 1000 - mtimeSec));
+        if (diff < 60) return `${diff}s ago`;
+        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+        if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+        return `${Math.floor(diff / 86400)}d ago`;
+      }
+
+      function escapeHtml(str) {
+        return String(str || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      function updateWorkspaceOptions() {
+        const select = document.getElementById("workspace-select");
+        if (!select) return;
+        const workspaces = Array.from(new Set(allProjects.map(p => p.workspace))).sort();
+        const current = select.value || "all";
+        select.innerHTML = `<option value="all">All Workspaces (${allProjects.length})</option>` +
+          workspaces.map(w => `<option value="${escapeHtml(w)}">📁 ${escapeHtml(w)}</option>`).join("");
+        if (workspaces.includes(current)) select.value = current;
+      }
+
+      function updateKpis() {
+        const unarchived = allProjects.filter(p => !p.archived);
+        const activeCount = unarchived.filter(p => p.overallStatus === "active" || p.overallStatus === "pending").length;
+        const awaitingCount = unarchived.filter(p => p.overallStatus === "awaiting_human").length;
+        const doneCount = unarchived.filter(p => p.overallStatus === "done").length;
+        const rejectCount = unarchived.filter(p => p.overallStatus === "reject" || p.overallStatus === "awaiting_human").length;
+        const archivedCount = allProjects.filter(p => p.archived).length;
+
+        document.getElementById("kpi-active").textContent = activeCount;
+        document.getElementById("kpi-done").textContent = doneCount;
+        document.getElementById("kpi-reject").textContent = rejectCount;
+        document.getElementById("kpi-archived").textContent = archivedCount;
+        document.getElementById("kpi-total").textContent = allProjects.length;
+
+        const hasHardReject = unarchived.some(p => p.overallStatus === "reject");
+        const orbColor = hasHardReject ? "%23f43f5e" : awaitingCount > 0 ? "%23f59e0b" : activeCount > 0 ? "%2338bdf8" : "%2310b981";
+        const link = document.getElementById("odin-favicon");
+        if (link) {
+          link.href = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%23f59e0b'/%3E%3Cstop offset='100%25' stop-color='%2338bdf8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpolygon points='32,3 58,18 58,46 32,61 6,46 6,18' fill='%230b1120' stroke='url(%23g)' stroke-width='4'/%3E%3Cpath d='M32 13 L47 41 H17 Z M32 23 L42 46 H22 Z' fill='none' stroke='%23f59e0b' stroke-width='3.2' stroke-linejoin='round'/%3E%3Ccircle cx='50' cy='14' r='9' fill='${orbColor}' stroke='%230b1120' stroke-width='2.5'/%3E%3C/svg%3E`;
+        }
+      }
+
+      const deltaBannerOpenState = new Map();
+      const deltaListScrollState = new Map();
+      const MOSAIC_ROW_GAP_PX = 18;
+      let mosaicResizeObserver = null;
+
+      function layoutProjectsMosaic() {
+        const grid = document.getElementById("projects-grid");
+        if (!grid) return;
+        const cards = Array.from(grid.querySelectorAll(".project-card"));
+        if (cards.length === 0) {
+          grid.removeAttribute("data-mosaic-pair");
+          return;
+        }
+
+        const initialHeights = cards.map(card => card.getBoundingClientRect().height);
+
+        // When 3 cards are visible and 1 card is significantly taller than the other 2,
+        // use a 2-column mosaic on desktop viewports so the 2 shorter cards stack beside the tall card.
+        if (cards.length === 3 && window.innerWidth >= 820) {
+          const sorted = [...initialHeights].sort((a, b) => b - a);
+          const tallest = sorted[0];
+          const shortAvg = (sorted[1] + sorted[2]) / 2;
+          const shouldPair = shortAvg > 0 && tallest >= shortAvg * 1.35;
+          if (shouldPair) {
+            if (grid.getAttribute("data-mosaic-pair") !== "true") {
+              grid.setAttribute("data-mosaic-pair", "true");
+            }
+          } else {
+            grid.removeAttribute("data-mosaic-pair");
+          }
+        } else {
+          grid.removeAttribute("data-mosaic-pair");
+        }
+
+        const isMosaicPair = grid.getAttribute("data-mosaic-pair") === "true" && cards.length === 3;
+        const maxIdx = isMosaicPair ? initialHeights.indexOf(Math.max(...initialHeights)) : -1;
+
+        cards.forEach((card, idx) => {
+          const h = card.getBoundingClientRect().height;
+          const span = Math.max(1, Math.ceil(h + MOSAIC_ROW_GAP_PX));
+          card.style.gridRowEnd = `span ${span}`;
+          if (isMosaicPair && maxIdx === 2) {
+            if (idx === 2) {
+              card.style.gridColumn = "2";
+              card.style.gridRowStart = "1";
+            } else {
+              card.style.gridColumn = "1";
+              card.style.gridRowStart = "";
+            }
+          } else {
+            card.style.gridColumn = "";
+            card.style.gridRowStart = "";
+          }
+        });
+      }
+
+      window.addEventListener("resize", () => layoutProjectsMosaic());
+
+      function getProjectSortPriority(p) {
+        if (typeof p.sortPriority === "number") return p.sortPriority;
+        if (p.archived) return 4;
+        const overall = p.overallStatus || "pending";
+        const human = p.humanStatus || "pending";
+        const awaitingSignoff = Boolean(p.awaitingSignoff || (overall === "done" && human !== "done"));
+        if (overall === "reject" || overall === "awaiting_human" || human === "reject" || p.awaitingHuman) return 0;
+        if (overall === "active" || overall === "pending") return 1;
+        if (awaitingSignoff) return 2;
+        if (overall === "done") return 3;
+        return 1;
+      }
+
+      function sortProjects(list, mode = activeSort) {
+        return [...list].sort((a, b) => {
+          if (mode === "alpha") {
+            return String(a.title || a.slug || "").localeCompare(String(b.title || b.slug || ""));
+          }
+          if (mode === "recent") {
+            return (Number(b.mtime) || 0) - (Number(a.mtime) || 0);
+          }
+          const prioDiff = getProjectSortPriority(a) - getProjectSortPriority(b);
+          if (prioDiff !== 0) return prioDiff;
+          return (Number(b.mtime) || 0) - (Number(a.mtime) || 0);
+        });
+      }
+
+      function renderProjects() {
+        const grid = document.getElementById("projects-grid");
+        if (!grid) return;
+
+        // Preserve any active scroll offset inside .card-delta-list before re-rendering
+        grid.querySelectorAll(".card-delta-list[data-project-id]").forEach(listEl => {
+          const pid = listEl.getAttribute("data-project-id");
+          if (pid) deltaListScrollState.set(pid, listEl.scrollTop);
+        });
+
+        const filtered = sortProjects(allProjects.filter(p => {
+          if (activeWorkspace !== "all" && p.workspace !== activeWorkspace) return false;
+          if (activeFilter === "active_realm" && p.archived) return false;
+          if (activeFilter === "in_progress" && (p.archived || (p.overallStatus !== "active" && p.overallStatus !== "pending" && p.overallStatus !== "awaiting_human" && !p.awaitingSignoff))) return false;
+          if (activeFilter === "awaiting_human" && (p.archived || (p.overallStatus !== "awaiting_human" && !p.awaitingHuman && !p.awaitingSignoff))) return false;
+          if (activeFilter === "done" && (p.archived || p.overallStatus !== "done")) return false;
+          if (activeFilter === "reject" && (p.archived || p.overallStatus !== "reject")) return false;
+          if (activeFilter === "archived" && !p.archived) return false;
+
+          if (searchQuery) {
+            const hay = (
+              p.title + " " + p.slug + " " + p.workspace + " " + (p.humanNote || "") + " " +
+              (p.branch || "") + " " + (p.worktreeShort || "") + " " + (p.appPort || "") + " " + (p.backendPort || "") + " " +
+              (p.openQuestions || []).join(" ") + " " +
+              Object.values(p.phases || {}).map(x => x.summary).join(" ")
+            ).toLowerCase();
+            if (!hay.includes(searchQuery)) return false;
+          }
+          return true;
+        }));
+
+        if (filtered.length === 0) {
+          grid.removeAttribute("data-mosaic-pair");
+          grid.innerHTML = `<div class="empty-state"><h3>No matching Odin projects in this view</h3><p>Try switching filter tabs or starting a new <code>/odin</code> workflow.</p></div>`;
+          return;
+        }
+
+        const phaseLabels = [
+          ["huginn-plan", "🪶 I. Huginn", false],
+          ["thor-execution", "⚡ II. Thor", false],
+          ["heimdall-validation", "🛡️ III. Heimdall", false],
+          ["hlidskjalf-judge", "👁️ IV. Hlidskjalf", false],
+          ["human-validation", "👑 V. Human Validation", true]
+        ];
+
+        grid.innerHTML = filtered.map(p => {
+          const isAwaitingSignoff = Boolean(p.awaitingSignoff || (p.overallStatus === "done" && p.humanStatus !== "done"));
+          const badgeClass = isAwaitingSignoff
+            ? "badge-awaiting_human"
+            : `badge-${p.overallStatus}`;
+          const badgeLabel = p.overallStatus === "awaiting_human"
+            ? "❓ OPEN QUESTIONS — AWAITING HUMAN"
+            : isAwaitingSignoff
+              ? "👑 AWAITING SIGN-OFF"
+              : (p.overallStatus === "done" && p.humanStatus === "done")
+                ? "✅ DONE & SIGNED OFF"
+                : p.overallStatus;
+          const secondaryDoneBadge = isAwaitingSignoff
+            ? `<span class="badge-done">✅ 4/4 AI PHASES</span>`
+            : "";
+          const projectHref = API_BASE + p.url;
+          const totalPhases = p.totalPhases || 4;
+          const chipsHtml = phaseLabels.map(([secId, label, isWide]) => {
+            const ph = p.phases?.[secId] || { status: "pending", summary: secId === "human-validation" ? "Awaiting human sign-off or rejection note." : "" };
+            const summaryText = (secId === "human-validation" && p.humanNote) ? p.humanNote : ph.summary;
+            const statusText = secId === "human-validation"
+              ? (ph.status === "awaiting_human" ? "👑 AWAITING SIGN-OFF" : ph.status === "done" ? "✅ APPROVED" : ph.status)
+              : (ph.status === "awaiting_human" ? "❓ OPEN QUESTIONS" : ph.status);
+            return `
+              <button type="button" class="phase-chip ${isWide ? "human-chip-wide" : ""}" data-action="${secId === "human-validation" ? "open-update-modal" : "cycle-phase"}" data-id="${escapeHtml(p.id)}" data-phase="${secId}" data-current="${ph.status}" data-phase-status="${ph.status}" title="${secId === "human-validation" ? "Click to open Human Validation & Rejection Note" : "Click to cycle status"} • ${escapeHtml(summaryText)}">
+                <div class="chip-head">
+                  <span>${label}</span>
+                  <span style="text-transform:uppercase;font-size:0.66rem;opacity:0.85;">${escapeHtml(statusText)}</span>
+                </div>
+                <div class="chip-summary">${escapeHtml(summaryText)}</div>
+              </button>
+            `;
+          }).join("");
+
+          const envPills = [];
+          const curIter = p.currentIteration || 1;
+          const maxIter = p.maxIterations || 5;
+          envPills.push(
+            `<span class="env-pill env-pill-iter" title="Iteration ${curIter} of ${maxIter} (${p.iterationCount || 1} recorded in ledger)">🔄 Iter ${curIter}/${maxIter}</span>`
+          );
+          if ((p.deltaCount || 0) > 0) {
+            const pendingCount = p.pendingDeltaCount || 0;
+            envPills.push(
+              `<button type="button" class="env-pill env-pill-delta" data-action="open-mimir-modal" data-id="${escapeHtml(p.id)}" title="Click to inspect Mímir Harness Delta Proposals (${pendingCount} pending / ${p.deltaCount} total)">` +
+              `🧠 ${pendingCount > 0 ? `${pendingCount} Pending` : `${p.deltaCount}`} Delta${p.deltaCount === 1 ? "" : "s"}</button>`
+            );
+          }
+          if (p.branch) {
+            envPills.push(`<span class="env-pill env-pill-branch" title="Git Branch">🌿 ${escapeHtml(p.branch)}</span>`);
+          }
+          if (p.worktreeShort) {
+            const dirtyBadge = p.worktreeDirty ? ` <span title="${p.worktreeDirtyCount} uncommitted change(s)" style="color:var(--gold);">●${p.worktreeDirtyCount}</span>` : "";
+            const pruneBtn = (p.isSecondaryWorktree && p.worktreeExists && !p.worktreeDirty)
+              ? `<button type="button" class="env-pill-action" data-action="prune-worktree" data-id="${escapeHtml(p.id)}" data-worktree="${escapeHtml(p.worktree)}" title="Remove clean secondary worktree">🧹 Prune</button>`
+              : "";
+            envPills.push(`<span class="env-pill env-pill-worktree" title="${escapeHtml(p.worktree)}">🗂️ ${escapeHtml(p.worktreeShort)}${dirtyBadge}${pruneBtn}</span>`);
+          }
+          if (p.appPort) {
+            const stopBtn = p.appPortLive
+              ? `<button type="button" class="env-pill-action" data-action="stop-port" data-id="${escapeHtml(p.id)}" data-port="${p.appPort}" title="Stop process on port :${p.appPort}">⏹ Stop</button>`
+              : "";
+            envPills.push(
+              `<span class="env-pill ${p.appPortLive ? "env-pill-live" : ""}" title="App dev server port :${p.appPort}">` +
+              `${p.appPortLive ? "🟢" : "⚫"} app :${p.appPort}${stopBtn}</span>`
+            );
+          }
+          if (p.backendPort) {
+            const stopBackendBtn = p.backendPortLive
+              ? `<button type="button" class="env-pill-action" data-action="stop-port" data-id="${escapeHtml(p.id)}" data-port="${p.backendPort}" title="Stop backend server on port :${p.backendPort}">⏹ Stop</button>`
+              : "";
+            envPills.push(
+              `<span class="env-pill ${p.backendPortLive ? "env-pill-live" : ""}" title="Backend port :${p.backendPort}">` +
+              `${p.backendPortLive ? "🟢" : "⚫"} backend :${p.backendPort}${stopBackendBtn}</span>`
+            );
+          }
+          if (p.telemetry) {
+            const t = p.telemetry;
+            if (t.watcherArmed) {
+              envPills.push(
+                `<span class="env-pill env-pill-live" title="Reactive watcher armed and listening for your action in Odin">🟢 YOUR TURN (Armed${t.sessionIdShort ? ` • ${escapeHtml(t.sessionIdShort)}` : ""})</span>`
+              );
+            } else if (t.agentState === "executing") {
+              envPills.push(
+                `<span class="env-pill env-pill-iter" title="Claude Code agent actively executing">⚡ EXECUTING${t.lastToolName ? ` (${escapeHtml(t.lastToolName)})` : ""}</span>`
+              );
+            } else if (t.paused) {
+              envPills.push(
+                `<span class="env-pill" title="Watchers paused">⏸️ PAUSED</span>`
+              );
+            }
+          }
+          const envRowHtml = envPills.length > 0 ? `<div class="env-pills-row">${envPills.join("")}</div>` : "";
+
+          const collisionBannerHtml = p.collisionWarning
+            ? `<div class="collision-banner"><strong>⚠️ Isolation Alert:</strong> ${escapeHtml(p.collisionWarning)}</div>`
+            : "";
+
+          const openQuestionsList = Array.isArray(p.openQuestions) ? p.openQuestions : [];
+          const openQuestionsBannerHtml = (p.overallStatus === "awaiting_human")
+            ? `<div class="open-questions-banner">
+                <strong>❓ Open Questions — Awaiting Human Decision in Claude Code${p.sessionId ? ` (Session <code>${escapeHtml(p.sessionId.slice(0, 8))}</code>)` : ""}:</strong>
+                ${openQuestionsList.length > 0
+                  ? `<ol>${openQuestionsList.map(q => `<li>${escapeHtml(q)}</li>`).join("")}</ol>`
+                  : `<div style="margin-top:0.2rem;">Paused awaiting human clarification before continuing execution.</div>`
+                }
+              </div>`
+            : "";
+
+          const rejectBannerHtml = (p.humanStatus === "reject" && p.humanNote)
+            ? `<div class="human-reject-banner"><strong>🚨 Rejected by Human:</strong> ${escapeHtml(p.humanNote)}</div>`
+            : "";
+
+          const cardDeltas = Array.isArray(p.harnessDeltas) ? p.harnessDeltas : [];
+          const cardPendingDeltas = cardDeltas.filter(d => (d.status || "pending") === "pending").length;
+          const isDeltaOpen = deltaBannerOpenState.has(p.id)
+            ? deltaBannerOpenState.get(p.id)
+            : cardPendingDeltas > 0;
+          const cardDeltaBannerHtml = cardDeltas.length > 0
+            ? `<details class="card-delta-banner" data-project-id="${escapeHtml(p.id)}" data-has-pending="${cardPendingDeltas > 0}" ${isDeltaOpen ? "open" : ""}>
+                <summary>
+                  <span>🧠 Mímir Harness Delta (${cardPendingDeltas > 0 ? `${cardPendingDeltas} Pending Approval` : `${cardDeltas.length} Applied`})</span>
+                  <span style="font-size:0.68rem;color:var(--muted);">▾ Inspect &amp; Approve</span>
+                </summary>
+                <div class="card-delta-list" data-project-id="${escapeHtml(p.id)}">
+                  ${cardDeltas.map(d => {
+                    const dst = String(d.status || "pending").toLowerCase();
+                    const stLabel = dst === "applied" ? "✅ APPLIED" : dst === "dismissed" ? "🚫 DISMISSED" : "⏳ PENDING";
+                    const stClass = dst === "applied" ? "badge-done" : dst === "dismissed" ? "badge-pending" : "badge-awaiting_human";
+                    return `
+                      <div class="card-delta-item">
+                        <div style="display:flex;justify-content:space-between;align-items:center;gap:0.35rem;flex-wrap:wrap;margin-bottom:0.25rem;">
+                          <span style="display:inline-flex;gap:0.3rem;align-items:center;flex-wrap:wrap;">
+                            <span class="${stClass}" style="font-size:0.62rem;padding:0.1rem 0.45rem;">${stLabel}</span>
+                            <code style="font-size:0.68rem;color:var(--violet);">${escapeHtml(d.repo || "odin")}/${escapeHtml(d.target_file || "")}</code>
+                          </span>
+                          <span style="font-size:0.65rem;color:var(--muted);font-family:monospace;">${escapeHtml(d.id || "")}</span>
+                        </div>
+                        <div style="color:var(--text);margin-bottom:0.25rem;">
+                          <strong style="color:var(--gold);">What this Delta is about:</strong> ${escapeHtml(d.root_cause || "")}
+                        </div>
+                        ${d.proposed_diff ? `<pre class="card-delta-diff"><code>${escapeHtml(d.proposed_diff)}</code></pre>` : ""}
+                        <div style="display:flex;gap:0.35rem;flex-wrap:wrap;margin-top:0.35rem;">
+                          ${dst !== "applied" ? `<button type="button" class="btn btn-emerald" style="padding:0.2rem 0.55rem;font-size:0.69rem;" data-action="mimir-card-status" data-id="${escapeHtml(p.id)}" data-delta-id="${escapeHtml(d.id)}" data-status="applied">✅ Approve Delta (Mark Applied)</button>` : ""}
+                          ${dst !== "dismissed" ? `<button type="button" class="btn" style="padding:0.2rem 0.55rem;font-size:0.69rem;" data-action="mimir-card-status" data-id="${escapeHtml(p.id)}" data-delta-id="${escapeHtml(d.id)}" data-status="dismissed">🚫 Dismiss</button>` : ""}
+                          ${dst !== "pending" ? `<button type="button" class="btn btn-gold" style="padding:0.2rem 0.55rem;font-size:0.69rem;" data-action="mimir-card-status" data-id="${escapeHtml(p.id)}" data-delta-id="${escapeHtml(d.id)}" data-status="pending">↩️ Reopen</button>` : ""}
+                        </div>
+                      </div>
+                    `;
+                  }).join("")}
+                </div>
+              </details>`
+            : "";
+
+          const showMarkDoneBtn = (p.overallStatus !== "done" || p.humanStatus !== "done");
+          const markDoneLabel = isAwaitingSignoff ? "✅ Sign Off & Mark Done" : "✅ Mark Done";
+
+          return `
+            <article class="project-card" data-status="${escapeHtml(isAwaitingSignoff ? "awaiting_human" : p.overallStatus)}" data-archived="${p.archived}">
+              <div>
+                <div class="card-top">
+                  <div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;">
+                    <span class="${badgeClass}">${escapeHtml(badgeLabel)}</span>
+                    ${secondaryDoneBadge}
+                    ${p.archived ? '<span class="badge-archived">📦 ARCHIVED</span>' : ''}
+                  </div>
+                  <span class="workspace-pill" title="Workspace">📁 ${escapeHtml(p.workspace)}</span>
+                </div>
+                <a class="card-title-link" href="${escapeHtml(projectHref)}">${escapeHtml(p.title)}</a>
+                <div class="card-slug">${escapeHtml(p.filename)} • Updated ${relativeTime(p.mtime)} (${p.doneCount}/${totalPhases} AI phases)</div>
+                ${envRowHtml}
+                <div class="progress-track" aria-label="Completion progress">
+                  <div class="progress-fill" style="width:${p.progressPct}%"></div>
+                </div>
+                ${collisionBannerHtml}
+                ${openQuestionsBannerHtml}
+                ${rejectBannerHtml}
+                ${cardDeltaBannerHtml}
+              </div>
+
+              <div class="phase-chips">
+                ${chipsHtml}
+              </div>
+
+              <div class="card-actions">
+                <div style="display:flex;gap:0.4rem;flex-wrap:wrap;">
+                  <a class="btn btn-cyan" href="${escapeHtml(projectHref)}">🚀 Open</a>
+                  <button type="button" class="btn" data-action="open-update-modal" data-id="${escapeHtml(p.id)}">✏️ Update</button>
+                  <button type="button" class="btn btn-crimson" data-action="quick-reject" data-id="${escapeHtml(p.id)}" title="Reject with a Human Validation note">🚨 Reject</button>
+                  ${showMarkDoneBtn ? `<button type="button" class="btn btn-emerald" data-action="mark-all-done" data-id="${escapeHtml(p.id)}">${markDoneLabel}</button>` : ""}
+                </div>
+                <div>
+                  ${p.archived
+                    ? `<button type="button" class="btn btn-gold" data-action="unarchive" data-id="${escapeHtml(p.id)}">📤 Restore</button>`
+                    : `<button type="button" class="btn" data-action="archive" data-id="${escapeHtml(p.id)}" title="Archive project (and clean up dedicated port/worktree if active)">📦 Archive</button>`
+                  }
+                </div>
+              </div>
+            </article>
+          `;
+        }).join("");
+
+        grid.querySelectorAll(".card-delta-list[data-project-id]").forEach(listEl => {
+          const pid = listEl.getAttribute("data-project-id");
+          if (pid && deltaListScrollState.has(pid)) {
+            listEl.scrollTop = deltaListScrollState.get(pid);
+          }
+          listEl.addEventListener("scroll", () => {
+            if (pid) deltaListScrollState.set(pid, listEl.scrollTop);
+          }, { passive: true });
+        });
+
+        grid.querySelectorAll("details.card-delta-banner[data-project-id]").forEach(detailsEl => {
+          detailsEl.addEventListener("toggle", () => {
+            const pid = detailsEl.getAttribute("data-project-id");
+            if (pid) deltaBannerOpenState.set(pid, detailsEl.open);
+            layoutProjectsMosaic();
+          });
+        });
+
+        if (typeof ResizeObserver !== "undefined") {
+          if (!mosaicResizeObserver) {
+            mosaicResizeObserver = new ResizeObserver(() => layoutProjectsMosaic());
+          } else {
+            mosaicResizeObserver.disconnect();
+          }
+          mosaicResizeObserver.observe(grid);
+          grid.querySelectorAll(".project-card").forEach(card => mosaicResizeObserver.observe(card));
+        }
+
+        layoutProjectsMosaic();
+      }
+
+      async function postAction(payload, toastTitle, toastBody, soundKind = "phase") {
+        try {
+          const res = await fetch(`${API_BASE}/api/projects/action`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          const data = await res.json();
+          if (!data.ok) throw new Error(data.error || "Action failed");
+          allProjects = data.projects || [];
+          const pauseBtn = document.getElementById("toggle-pause-btn");
+          if (pauseBtn && typeof data.pausedLive === "boolean") {
+            pauseBtn.textContent = data.pausedLive ? "▶️ Resume Watchers" : "⏸️ Pause Watchers";
+          }
+          if (data.telemetry) renderTelemetry(data.telemetry);
+          updateWorkspaceOptions();
+          updateKpis();
+          renderProjects();
+          if (toastTitle) {
+            const extra = (data.cleanupNotes && data.cleanupNotes.length) ? " (" + data.cleanupNotes.join("; ") + ")" : "";
+            notifyUser(toastTitle, toastBody + extra, soundKind);
+          }
+          return data;
+        } catch (err) {
+          showToast("🚨 Action Error", err.message || String(err));
+          if (!toastTitle) throw err;
+          return null;
+        }
+      }
+
+      // Staging needs Odin running from a git checkout; hide its controls otherwise.
+      function applyStagingConfig(data) {
+        if (typeof data.stagingAvailable !== "boolean") return;
+        const stagingBtn = document.getElementById("open-staging-btn");
+        if (stagingBtn) stagingBtn.hidden = !data.stagingAvailable;
+        document.querySelectorAll(".odin-staging-dir").forEach(el => { if (data.stagingDir) el.textContent = data.stagingDir; });
+        document.querySelectorAll(".odin-staging-branch").forEach(el => { if (data.stagingBranch) el.textContent = data.stagingBranch; });
+      }
+
+      let lastTelemetrySignature = "";
+
+      // Renders rows from the configured telemetry command: a JSON array of objects.
+      // Columns come from config ("columns": [{key, label}]) or the keys of the first row.
+      // A row whose "name" is "latest" is treated as the reference other rows are compared to.
+      function renderTelemetry(telemetry) {
+        const panel = document.getElementById("telemetry-panel");
+        if (!telemetry || !panel) return;
+        panel.hidden = !telemetry.configured;
+        if (!telemetry.configured) return;
+
+        const rows = Array.isArray(telemetry.environments) ? telemetry.environments : [];
+        const titleEl = document.getElementById("telemetry-title");
+        const summaryEl = document.getElementById("telemetry-latest-summary");
+        const thead = document.getElementById("telemetry-thead");
+        const tbody = document.getElementById("telemetry-tbody");
+        if (titleEl) titleEl.textContent = `🛰️ ${telemetry.title || "Environment Telemetry"}`;
+
+        const syncText = telemetry.ts ? `Synced ${relativeTime(telemetry.ts)}` : (telemetry.refreshing ? "Refreshing..." : "Pending");
+        if (telemetry.error && rows.length === 0) {
+          summaryEl.innerHTML = `<span style="color:var(--crimson);">⚠️ ${escapeHtml(telemetry.error)}</span>`;
+          tbody.innerHTML = `<tr><td style="color:var(--crimson);">${escapeHtml(telemetry.error)}</td></tr>`;
+          return;
+        }
+        summaryEl.innerHTML = `<span>${escapeHtml(syncText)}</span>`;
+        if (rows.length === 0) return;
+
+        const sig = JSON.stringify(rows);
+        if (sig === lastTelemetrySignature) return;
+        lastTelemetrySignature = sig;
+
+        const nameKey = "name" in rows[0] ? "name" : Object.keys(rows[0])[0];
+        const columns = (telemetry.columns && telemetry.columns.length)
+          ? telemetry.columns
+          : Object.keys(rows[0]).filter(k => k !== nameKey && typeof rows[0][k] !== "object").map(k => ({ key: k, label: k }));
+        const ref = rows.find(r => String(r[nameKey] || "").toLowerCase() === "latest") || null;
+
+        thead.innerHTML = `<tr><th scope="col">Environment</th>${columns.map(c => `<th scope="col">${escapeHtml(c.label || c.key)}</th>`).join("")}</tr>`;
+        tbody.innerHTML = rows.map(row => {
+          const isRef = row === ref;
+          const cells = columns.map(c => {
+            const val = row[c.key] == null ? "—" : String(row[c.key]);
+            const matches = ref && !isRef && ref[c.key] != null && String(ref[c.key]) === val;
+            const cls = isRef ? "telemetry-ver-pill telemetry-ver-ref" : (matches ? "telemetry-ver-pill telemetry-ver-match" : "telemetry-ver-pill");
+            return `<td data-label="${escapeHtml(c.label || c.key)}"><span class="${cls}">${escapeHtml(val)}${matches ? " ✓" : ""}</span></td>`;
+          }).join("");
+          return `<tr><th scope="row">${escapeHtml(String(row[nameKey] ?? ""))}</th>${cells}</tr>`;
+        }).join("");
+      }
+
+      async function fetchTelemetry(force = false) {
+        const btn = document.getElementById("refresh-telemetry-btn");
+        if (btn && force) {
+          btn.disabled = true;
+          btn.textContent = "⏳ Refreshing...";
+        }
+        try {
+          const res = await fetch(`${API_BASE}/api/telemetry?force=${force ? "1" : "0"}&_t=${Date.now()}`, { cache: "no-store" });
+          const data = await res.json();
+          if (data.ok && data.telemetry) {
+            renderTelemetry(data.telemetry);
+            if (force && data.telemetry.configured) {
+              notifyUser("🛰️ Telemetry Synchronized", "Refreshed environment telemetry.", "phase");
+            }
+          }
+        } catch (err) {
+          if (force) showToast("🚨 Telemetry Error", err.message || String(err));
+        } finally {
+          if (btn && force) {
+            btn.disabled = false;
+            btn.textContent = "🔄 Refresh";
+          }
+        }
+      }
+
+      async function fetchProjects(silent = false) {
+        try {
+          const res = await fetch(`${API_BASE}/api/projects?_t=${Date.now()}`, { cache: "no-store" });
+          const data = await res.json();
+          if (!data.ok) return;
+
+          const prevRaw = sessionStorage.getItem(SNAPSHOT_KEY);
+          const prevMap = prevRaw ? JSON.parse(prevRaw) : null;
+          const nextMap = {};
+
+          (data.projects || []).forEach(p => {
+            nextMap[p.id] = `${p.overallStatus}:${p.doneCount}:${p.archived}`;
+            if (prevMap && prevMap[p.id] && prevMap[p.id] !== nextMap[p.id]) {
+              const kind = p.overallStatus === "done" ? "done" : p.overallStatus === "reject" ? "reject" : p.overallStatus === "awaiting_human" ? "awaiting_human" : "phase";
+              notifyUser(`⚡ ${p.title}`, `Status updated to ${p.overallStatus.toUpperCase()} (${p.doneCount}/4 phases)`, kind);
+            }
+          });
+          sessionStorage.setItem(SNAPSHOT_KEY, JSON.stringify(nextMap));
+
+          allProjects = data.projects || [];
+          const pauseBtn = document.getElementById("toggle-pause-btn");
+          if (pauseBtn && typeof data.pausedLive === "boolean") {
+            pauseBtn.textContent = data.pausedLive ? "▶️ Resume Watchers" : "⏸️ Pause Watchers";
+          }
+          if (data.telemetry) renderTelemetry(data.telemetry);
+          applyStagingConfig(data);
+          if (data.mimirAudit) {
+            mimirAuditData = data.mimirAudit;
+            renderMimirAudit();
+          }
+          updateWorkspaceOptions();
+          updateKpis();
+          renderProjects();
+          const syncEl = document.getElementById("last-sync-label");
+          if (syncEl) syncEl.textContent = "Synced " + new Date().toLocaleTimeString();
+        } catch (err) {
+          if (!silent) showToast("⚠️ Server Offline", "Start odin-server.py on port 8788.");
+        }
+      }
+
+      let activeMimirProjectFilter = null;
+
+      function renderMimirAudit(filterProjectId = activeMimirProjectFilter) {
+        activeMimirProjectFilter = filterProjectId || null;
+        const audit = mimirAuditData || {};
+        const kvasir = audit.kvasir_telemetry || {};
+        const mimir = audit.mimir_proposals || audit.mimir_synthesis || {};
+        const proposals = Array.isArray(mimir.proposals) ? mimir.proposals : [];
+
+        const pendingCount = Number(mimir.pending_proposals ?? mimir.pending_deltas ?? proposals.filter(p => (p.status || "pending") === "pending").length);
+        const appliedCount = proposals.filter(p => p.status === "applied").length;
+
+        const badgeEl = document.getElementById("mimir-badge-count");
+        if (badgeEl) {
+          badgeEl.textContent = String(pendingCount);
+          badgeEl.style.background = pendingCount > 0 ? "rgba(244, 63, 94, 0.25)" : "rgba(16, 185, 129, 0.22)";
+          badgeEl.style.color = pendingCount > 0 ? "var(--crimson)" : "var(--emerald)";
+        }
+
+        const kpiProjects = document.getElementById("mimir-kpi-projects");
+        const kpiMulti = document.getElementById("mimir-kpi-multi");
+        const kpiPending = document.getElementById("mimir-kpi-pending");
+        const kpiApplied = document.getElementById("mimir-kpi-applied");
+        if (kpiProjects) kpiProjects.textContent = String(kvasir.projects_scanned || kvasir.total_projects || allProjects.length || 0);
+        if (kpiMulti) kpiMulti.textContent = String(kvasir.multi_iteration_projects || 0);
+        if (kpiPending) kpiPending.textContent = String(pendingCount);
+        if (kpiApplied) kpiApplied.textContent = String(appliedCount);
+
+        const container = document.getElementById("mimir-deltas-container");
+        if (!container) return;
+
+        const statusFilter = document.getElementById("mimir-status-filter")?.value || "pending";
+        const matchesProject = (d) => {
+          if (!activeMimirProjectFilter) return true;
+          const projSlug = String(d.source_project || d.project_slug || "");
+          const srcFile = String(d.source_file || d.state_file || "");
+          const tail = activeMimirProjectFilter.split("/").pop();
+          return projSlug === activeMimirProjectFilter || projSlug === tail.replace(/\.html$/i, "") || srcFile.endsWith(tail);
+        };
+
+        let visible = proposals.filter(d => {
+          const st = d.status || "pending";
+          if (statusFilter !== "all" && st !== statusFilter) return false;
+          return matchesProject(d);
+        });
+
+        if (visible.length === 0 && proposals.length > 0) {
+          const projectScoped = proposals.filter(matchesProject);
+          if (projectScoped.length > 0) {
+            visible = projectScoped;
+          } else if (statusFilter === "pending") {
+            visible = proposals;
+          }
+        }
+
+        if (visible.length === 0) {
+          container.innerHTML = `<div class="empty-state" style="padding:1.5rem;"><h3>No Harness Delta Proposals matching filter</h3><p>Phase IV (Hlidskjalf) records <code>harness_delta_proposals</code> whenever a project requires &gt;1 iteration or uncovers a harness gap.</p></div>`;
+          return;
+        }
+
+        container.innerHTML = visible.map(d => {
+          const prio = String(d.priority || "p1").toLowerCase();
+          const st = String(d.status || "pending").toLowerCase();
+          const sourceProj = d.source_project || d.project_slug || "";
+          const sourceFile = d.source_file || d.state_file || "";
+          const prioBadge = prio === "p0"
+            ? `<span class="badge-reject">🚨 P0 CRITICAL</span>`
+            : prio === "p1"
+              ? `<span class="badge-awaiting_human">⚡ P1 HIGH</span>`
+              : `<span class="badge-active">ℹ️ P2</span>`;
+          const statusBadge = st === "applied"
+            ? `<span class="badge-done">✅ APPLIED</span>`
+            : st === "in_progress"
+              ? `<span class="badge-active">⚡ IN PROGRESS (TICKET SPAWNED)</span>`
+              : st === "dismissed"
+                ? `<span class="badge-pending">🚫 DISMISSED</span>`
+                : `<span class="badge-awaiting_human">⏳ PENDING</span>`;
+          const spawnedTicketId = d.spawned_ticket_id || "";
+          const spawnedTicketUrl = d.spawned_ticket_url || (spawnedTicketId ? `/${spawnedTicketId.replace(/^\/+/, "")}` : "");
+          const spawnedTicketLink = spawnedTicketUrl
+            ? `<a href="${escapeHtml(spawnedTicketUrl)}" target="_blank" class="env-pill env-pill-branch" style="text-decoration:none;border-color:rgba(56,189,248,0.6);color:#38bdf8;">🎫 Open Delta Ticket (${escapeHtml(spawnedTicketId || "ticket")}) ↗</a>`
+            : "";
+
+          return `
+            <article class="mimir-delta-card" data-priority="${escapeHtml(prio)}" data-status="${escapeHtml(st)}">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.45rem;">
+                <div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;">
+                  ${prioBadge}
+                  ${statusBadge}
+                  <span class="env-pill env-pill-branch">📦 ${escapeHtml(d.repo || "repo")}</span>
+                  <span class="env-pill env-pill-worktree">📄 ${escapeHtml(d.target_file || "")}</span>
+                  <span class="env-pill env-pill-iter">🔄 Iter ${escapeHtml(d.iteration || 1)}</span>
+                  ${spawnedTicketLink}
+                </div>
+                <span style="font-size:0.72rem;color:var(--muted);font-family:monospace;">${escapeHtml(d.id || "")} • ${escapeHtml(sourceProj)}</span>
+              </div>
+              <div style="font-size:0.83rem;line-height:1.45;margin-bottom:0.4rem;">
+                <strong style="color:var(--gold);">What this Delta is about (${escapeHtml(d.category || "harness")}):</strong>
+                ${escapeHtml(d.root_cause || "")}
+              </div>
+              <pre class="mimir-diff-pre"><code>${escapeHtml(d.proposed_diff || "")}</code></pre>
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:0.45rem;flex-wrap:wrap;margin-top:0.55rem;">
+                <div style="display:flex;gap:0.4rem;flex-wrap:wrap;">
+                  <button type="button" class="btn" style="padding:0.25rem 0.6rem;font-size:0.73rem;" data-mimir-action="copy-diff" data-delta-id="${escapeHtml(d.id)}">📋 Copy Diff</button>
+                  <button type="button" class="btn btn-cyan" style="padding:0.25rem 0.6rem;font-size:0.73rem;" data-mimir-action="copy-prompt" data-delta-id="${escapeHtml(d.id)}">🤖 Copy Agent Apply Prompt</button>
+                </div>
+                <div style="display:flex;gap:0.4rem;flex-wrap:wrap;">
+                  ${st !== "applied" ? `<button type="button" class="btn btn-emerald" style="padding:0.25rem 0.65rem;font-size:0.73rem;font-weight:700;" data-mimir-action="spawn-ticket" data-delta-id="${escapeHtml(d.id)}" data-source-file="${escapeHtml(sourceFile)}">⚡ Approve &amp; Spawn Delta Ticket</button>` : ""}
+                  ${st !== "applied" ? `<button type="button" class="btn" style="padding:0.25rem 0.6rem;font-size:0.72rem;" data-mimir-action="mark-status" data-status="applied" data-delta-id="${escapeHtml(d.id)}" data-source-file="${escapeHtml(sourceFile)}">☑️ Mark Already Applied</button>` : ""}
+                  ${st !== "dismissed" ? `<button type="button" class="btn" style="padding:0.25rem 0.6rem;font-size:0.73rem;" data-mimir-action="mark-status" data-status="dismissed" data-delta-id="${escapeHtml(d.id)}" data-source-file="${escapeHtml(sourceFile)}">🚫 Dismiss</button>` : ""}
+                  ${st !== "pending" ? `<button type="button" class="btn btn-gold" style="padding:0.25rem 0.6rem;font-size:0.73rem;" data-mimir-action="mark-status" data-status="pending" data-delta-id="${escapeHtml(d.id)}" data-source-file="${escapeHtml(sourceFile)}">↩️ Reopen</button>` : ""}
+                </div>
+              </div>
+            </article>
+          `;
+        }).join("");
+      }
+
+      async function fetchMimirAudit(showNotice = false) {
+        try {
+          const res = await fetch(`${API_BASE}/api/mimir/audit?_t=${Date.now()}`, { cache: "no-store" });
+          const data = await res.json();
+          if (data.ok && data.audit) {
+            mimirAuditData = data.audit;
+            renderMimirAudit(activeMimirProjectFilter);
+            if (showNotice) {
+              notifyUser("🧠 Mímir Audit Refreshed", "Aggregated Harness Delta Proposals across all Odin ledgers.", "phase");
+            }
+          }
+        } catch (err) {
+          if (showNotice) showToast("🚨 Mímir Error", err.message || String(err));
+        }
+      }
+
+      async function markMimirDeltaStatus(deltaId, status, sourceFile) {
+        try {
+          const res = await fetch(`${API_BASE}/api/mimir/apply`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "mimir_mark_status", deltaId, status, filePath: sourceFile })
+          });
+          const data = await res.json();
+          if (!data.ok) throw new Error(data.error || "Failed to update proposal status");
+          allProjects = data.projects || allProjects;
+          if (data.mimirAudit || data.audit) mimirAuditData = data.mimirAudit || data.audit;
+          renderMimirAudit(activeMimirProjectFilter);
+          renderProjects();
+          notifyUser("🧠 Harness Delta Updated", `${deltaId} marked ${status.toUpperCase()}.`, status === "applied" ? "done" : "phase");
+        } catch (err) {
+          showToast("🚨 Mímir Update Error", err.message || String(err));
+        }
+      }
+
+      function openMimirModal(filterProjectSlug = null) {
+        const dlg = document.getElementById("mimir-dialog");
+        if (!dlg) return;
+        activeMimirProjectFilter = filterProjectSlug || null;
+        renderMimirAudit(activeMimirProjectFilter);
+        dlg.showModal();
+        fetchMimirAudit(false);
+      }
+
+      // Human Validation UI & ARIA Sync (modern-web-guidance: required-field-feedback)
+      const humanSelect = document.getElementById("edit-human-validation");
+      const humanPanel = document.getElementById("human-validation-panel");
+      const humanNoteInput = document.getElementById("edit-human-note");
+      const humanNoteReqBadge = document.getElementById("human-note-req-badge");
+
+      function syncHumanValidationUi(statusVal) {
+        if (!humanPanel || !humanNoteInput || !humanSelect) return;
+        humanSelect.value = statusVal;
+        humanPanel.setAttribute("data-human-state", statusVal);
+        const isReject = statusVal === "reject";
+        humanNoteInput.required = isReject;
+        if (humanNoteReqBadge) {
+          humanNoteReqBadge.textContent = isReject ? "(* required when rejecting)" : "(required on REJECT)";
+          humanNoteReqBadge.style.color = isReject ? "var(--crimson)" : "var(--muted)";
+        }
+        if (!isReject) {
+          humanNoteInput.setAttribute("aria-invalid", "false");
+          humanNoteInput.classList.remove("user-invalid-fallback");
+        }
+      }
+
+      function syncFieldValidity(field) {
+        if (!field) return true;
+        const valid = field.checkValidity();
+        field.setAttribute("aria-invalid", String(!valid));
+        field.classList.toggle("user-invalid-fallback", !valid);
+        return valid;
+      }
+
+      humanSelect?.addEventListener("change", (e) => {
+        syncHumanValidationUi(e.target.value);
+      });
+
+      document.getElementById("quick-human-approve-btn")?.addEventListener("click", () => {
+        syncHumanValidationUi("done");
+        humanNoteInput?.focus();
+      });
+
+      document.getElementById("quick-human-reject-btn")?.addEventListener("click", () => {
+        syncHumanValidationUi("reject");
+        humanNoteInput?.focus();
+      });
+
+      [document.getElementById("edit-title"), humanNoteInput].forEach((field) => {
+        field?.addEventListener("blur", () => {
+          if (field.required) syncFieldValidity(field);
+        });
+        field?.addEventListener("input", () => {
+          if (field.getAttribute("aria-invalid") === "true") {
+            syncFieldValidity(field);
+          }
+        });
+      });
+
+      document.getElementById("auto-allocate-env-btn")?.addEventListener("click", async () => {
+        const id = document.getElementById("edit-project-id").value;
+        const proj = allProjects.find(p => p.id === id);
+        const slug = proj ? proj.slug : "odin-task";
+        const branchInput = document.getElementById("edit-branch");
+        const branchVal = (branchInput.value || "").trim() || `feat/${slug}`;
+        try {
+          const res = await fetch(`${API_BASE}/api/projects/action`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "allocate_env", branch: branchVal, slug })
+          });
+          const data = await res.json();
+          if (!data.ok) throw new Error(data.error || "Allocation failed");
+          const alloc = data.allocation;
+          branchInput.value = alloc.branch || branchVal;
+          document.getElementById("edit-worktree").value = alloc.worktree || "";
+          document.getElementById("edit-app-port").value = alloc.appPort || 8080;
+          document.getElementById("edit-backend-port").value = alloc.backendPort || "";
+          showToast("⚡ Port & Worktree Assigned", `Assigned :${alloc.appPort} in ${alloc.worktree.split("/").pop()}`);
+        } catch (err) {
+          showToast("🚨 Allocation Error", err.message || String(err));
+        }
+      });
+
+      function openUpdateModal(proj, presetHumanStatus = null) {
+        const dlg = document.getElementById("update-dialog");
+        document.getElementById("edit-project-id").value = proj.id;
+        const titleInput = document.getElementById("edit-title");
+        titleInput.value = proj.title;
+        titleInput.setAttribute("aria-invalid", "false");
+        titleInput.classList.remove("user-invalid-fallback");
+
+        document.getElementById("edit-huginn").value = proj.phases?.["huginn-plan"]?.status || "pending";
+        document.getElementById("edit-thor").value = proj.phases?.["thor-execution"]?.status || "pending";
+        document.getElementById("edit-heimdall").value = proj.phases?.["heimdall-validation"]?.status || "pending";
+        document.getElementById("edit-hlidskjalf").value = proj.phases?.["hlidskjalf-judge"]?.status || "pending";
+
+        const initialHumanStatus = presetHumanStatus || proj.phases?.["human-validation"]?.status || "pending";
+        humanNoteInput.value = proj.humanNote || "";
+        humanNoteInput.setAttribute("aria-invalid", "false");
+        humanNoteInput.classList.remove("user-invalid-fallback");
+        syncHumanValidationUi(initialHumanStatus);
+
+        document.getElementById("edit-branch").value = proj.branch || "";
+        document.getElementById("edit-worktree").value = proj.worktree || "";
+        document.getElementById("edit-app-port").value = proj.appPort || "";
+        document.getElementById("edit-backend-port").value = proj.backendPort || "";
+
+        document.getElementById("edit-note").value = "";
+        dlg.showModal();
+        if (presetHumanStatus === "reject") {
+          setTimeout(() => humanNoteInput.focus(), 40);
+        }
+      }
+
+      // Event Delegation for Project Cards
+      const cycleOrder = ["pending", "active", "awaiting_human", "done", "reject"];
+      document.getElementById("projects-grid")?.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-action]");
+        if (!btn) return;
+        const action = btn.getAttribute("data-action");
+        const id = btn.getAttribute("data-id");
+        const proj = allProjects.find(p => p.id === id);
+        if (!proj) return;
+
+        if (action === "stop-port") {
+          const port = Number(btn.getAttribute("data-port"));
+          postAction({ action: "stop_port", port }, "⏹ Port Stopped", `Terminated dev server on port :${port}.`, "phase");
+        } else if (action === "prune-worktree") {
+          const wt = btn.getAttribute("data-worktree");
+          postAction({ action: "prune_worktree", worktree: wt }, "🧹 Worktree Pruned", `Removed clean secondary worktree ${proj.worktreeShort}.`, "phase");
+        } else if (action === "archive") {
+          const payload = { action: "archive", id };
+          if (proj.appPort && proj.appPortLive) payload.stopPort = proj.appPort;
+          if (proj.isSecondaryWorktree && proj.worktreeExists && !proj.worktreeDirty) payload.pruneWorktree = proj.worktree;
+          postAction(payload, "📦 Project Archived", `Moved ${proj.filename} to archive/.`, "phase");
+        } else if (action === "unarchive") {
+          postAction({ action: "unarchive", id }, "📤 Project Restored", `Restored ${proj.filename} to active realm.`, "phase");
+        } else if (action === "mark-all-done") {
+          postAction({
+            action: "update_project",
+            id,
+            phases: {
+              "huginn-plan": "done",
+              "thor-execution": "done",
+              "heimdall-validation": "done",
+              "hlidskjalf-judge": "done",
+              "human-validation": "done"
+            }
+          }, "✅ Project Marked DONE", `${proj.title} marked 5/5 DONE.`, "done");
+        } else if (action === "cycle-phase") {
+          const phase = btn.getAttribute("data-phase");
+          const current = btn.getAttribute("data-current") || "pending";
+          const next = cycleOrder[(cycleOrder.indexOf(current) + 1) % cycleOrder.length];
+          postAction({
+            action: "update_project",
+            id,
+            phases: { [phase]: next }
+          }, `⚡ ${proj.title}`, `${phase} → ${next.toUpperCase()}`, next === "done" ? "done" : next === "reject" ? "reject" : next === "awaiting_human" ? "awaiting_human" : "phase");
+        } else if (action === "open-update-modal") {
+          openUpdateModal(proj);
+        } else if (action === "quick-reject") {
+          openUpdateModal(proj, "reject");
+        } else if (action === "open-mimir-modal") {
+          openMimirModal(proj.slug);
+        } else if (action === "mimir-card-status") {
+          const deltaId = btn.getAttribute("data-delta-id");
+          const nextStatus = btn.getAttribute("data-status") || "applied";
+          markMimirDeltaStatus(deltaId, nextStatus, proj.filepath || "");
+        }
+      });
+
+      // Mímir Dialog Controls & Event Delegation
+      const mimirDialog = document.getElementById("mimir-dialog");
+      document.getElementById("open-mimir-btn")?.addEventListener("click", () => openMimirModal(null));
+      document.getElementById("close-mimir-btn")?.addEventListener("click", () => mimirDialog?.close());
+      document.getElementById("refresh-mimir-btn")?.addEventListener("click", () => fetchMimirAudit(true));
+      document.getElementById("mimir-status-filter")?.addEventListener("change", () => renderMimirAudit(activeMimirProjectFilter));
+
+      document.getElementById("copy-all-mimir-prompt-btn")?.addEventListener("click", async () => {
+        const allProps = mimirAuditData?.mimir_proposals?.proposals || mimirAuditData?.mimir_synthesis?.proposals || [];
+        const proposals = allProps.filter(p => (p.status || "pending") === "pending");
+        const promptText = proposals.length > 0
+          ? `Run Mímir Harness Audit and apply the ${proposals.length} pending Harness Delta Proposal(s): ` +
+            proposals.map(p => `[${p.id}] ${p.repo} -> ${p.target_file}: ${p.root_cause}`).join(" | ")
+          : "Run the Odin Mímir audit (odin-state.py mimir-audit) and apply any pending harness delta proposals.";
+        try {
+          await navigator.clipboard.writeText(promptText);
+          notifyUser("🤖 Mímir Prompt Copied", "Paste into Claude Code to apply pending Harness Deltas.", "done");
+        } catch {
+          showToast("📋 Prompt Ready", promptText);
+        }
+      });
+
+      document.getElementById("mimir-deltas-container")?.addEventListener("click", async (e) => {
+        const btn = e.target.closest("[data-mimir-action]");
+        if (!btn) return;
+        const action = btn.getAttribute("data-mimir-action");
+        const deltaId = btn.getAttribute("data-delta-id");
+        const proposals = mimirAuditData?.mimir_proposals?.proposals || mimirAuditData?.mimir_synthesis?.proposals || [];
+        const item = proposals.find(p => p.id === deltaId);
+        if (!item) return;
+
+        if (action === "copy-diff") {
+          try {
+            await navigator.clipboard.writeText(item.proposed_diff || "");
+            showToast("📋 Diff Copied", `Copied proposed diff for ${item.target_file}`);
+          } catch {}
+        } else if (action === "copy-prompt") {
+          const prompt = `Apply Odin Harness Delta [${item.id}] to ${item.repo}/${item.target_file} (Root cause: ${item.root_cause}):\n\n${item.proposed_diff}`;
+          try {
+            await navigator.clipboard.writeText(prompt);
+            notifyUser("🤖 Agent Prompt Copied", `Copied apply prompt for ${item.id}.`, "done");
+          } catch {}
+        } else if (action === "spawn-ticket") {
+          const sourceFile = btn.getAttribute("data-source-file") || item.source_file || item.state_file || "";
+          btn.disabled = true;
+          const origText = btn.textContent;
+          btn.textContent = "⏳ Spawning Ticket…";
+          try {
+            const res = await fetch(`${API_BASE}/api/mimir/apply`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "mimir_spawn_delta_ticket",
+                deltaId,
+                filePath: sourceFile,
+              }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+            if (data.agentPrompt && navigator.clipboard && navigator.clipboard.writeText) {
+              try { await navigator.clipboard.writeText(data.agentPrompt); } catch {}
+            }
+            if (data.audit) {
+              mimirAuditData = data.audit;
+              renderMimirAudit(activeMimirProjectFilter);
+            }
+            if (data.projects) {
+              projectsData = data.projects;
+              renderAll();
+            }
+            notifyUser(
+              "🎫 Mímir Delta Ticket Spawned",
+              data.watcherArmed
+                ? `Spawned ${data.spawnedTicketId} and woke armed Claude Code agent.`
+                : `Spawned ${data.spawnedTicketId} (copied /odin prompt to clipboard).`,
+              "done"
+            );
+          } catch (err) {
+            showToast("🚨 Spawn Error", err.message || String(err));
+            btn.disabled = false;
+            btn.textContent = origText;
+          }
+        } else if (action === "mark-status") {
+          const nextStatus = btn.getAttribute("data-status") || "applied";
+          const sourceFile = btn.getAttribute("data-source-file") || item.source_file || item.state_file || "";
+          await markMimirDeltaStatus(deltaId, nextStatus, sourceFile);
+        }
+      });
+
+      // Modal Dialog Submit & Light-Dismiss Fallback (modern-web-guidance: light-dismiss-a-dialog)
+      const dialog = document.getElementById("update-dialog");
+      if (dialog && !("closedBy" in HTMLDialogElement.prototype)) {
+        dialog.addEventListener("click", (event) => {
+          if (event.target !== dialog) return;
+          const rect = dialog.getBoundingClientRect();
+          const isDialogContent = (
+            rect.top <= event.clientY &&
+            event.clientY <= rect.top + rect.height &&
+            rect.left <= event.clientX &&
+            event.clientX <= rect.left + rect.width
+          );
+          if (isDialogContent) return;
+          dialog.close();
+        });
+      }
+
+      document.getElementById("close-dialog-btn")?.addEventListener("click", () => dialog.close());
+      document.getElementById("cancel-dialog-btn")?.addEventListener("click", () => dialog.close());
+      document.getElementById("update-form")?.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const titleField = document.getElementById("edit-title");
+        const humanStatus = document.getElementById("edit-human-validation").value;
+
+        // Require non-whitespace note when rejecting
+        if (humanStatus === "reject" && !humanNoteInput.value.trim()) {
+          humanNoteInput.value = "";
+        }
+
+        const validTitle = syncFieldValidity(titleField);
+        const validHumanNote = syncFieldValidity(humanNoteInput);
+        if (!validTitle || !validHumanNote) {
+          (!validHumanNote ? humanNoteInput : titleField).focus();
+          playGjallarhorn("reject");
+          return;
+        }
+
+        const id = document.getElementById("edit-project-id").value;
+        const title = titleField.value.trim();
+        const phases = {
+          "huginn-plan": document.getElementById("edit-huginn").value,
+          "thor-execution": document.getElementById("edit-thor").value,
+          "heimdall-validation": document.getElementById("edit-heimdall").value,
+          "hlidskjalf-judge": document.getElementById("edit-hlidskjalf").value,
+          "human-validation": humanStatus
+        };
+        const humanNote = humanNoteInput.value.trim();
+        const branch = document.getElementById("edit-branch").value.trim();
+        const worktree = document.getElementById("edit-worktree").value.trim();
+        const appPort = document.getElementById("edit-app-port").value.trim();
+        const backendPort = document.getElementById("edit-backend-port").value.trim();
+        const note = document.getElementById("edit-note").value.trim();
+        const notePhase = document.getElementById("edit-note-phase").value;
+        dialog.close();
+
+        const isRejected = Object.values(phases).includes("reject");
+        const isAwaiting = Object.values(phases).includes("awaiting_human");
+        const isAllDone = Object.values(phases).every(s => s === "done");
+        const soundKind = isRejected ? "reject" : isAwaiting ? "awaiting_human" : isAllDone ? "done" : "phase";
+        const toastTitle = humanStatus === "reject"
+          ? "🚨 Project Rejected by Human"
+          : humanStatus === "done"
+            ? "👑 Human Validation Approved"
+            : isAwaiting
+              ? "❓ Open Questions — Awaiting Human"
+              : "💾 Project Updated";
+        const toastBody = humanStatus === "reject" && humanNote
+          ? `${title}: ${humanNote}`
+          : `Saved changes to ${title}.`;
+
+        postAction(
+          { action: "update_project", id, title, phases, humanNote, branch, worktree, appPort, backendPort, note, notePhase },
+          toastTitle,
+          toastBody,
+          soundKind
+        );
+      });
+
+      // Filter Tabs, Workspace Select, Search
+      document.querySelectorAll(".tab-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          document.querySelectorAll(".tab-btn").forEach(b => b.setAttribute("aria-selected", "false"));
+          btn.setAttribute("aria-selected", "true");
+          activeFilter = btn.getAttribute("data-filter");
+          renderProjects();
+        });
+      });
+
+      document.getElementById("sort-select")?.addEventListener("change", (e) => {
+        activeSort = e.target.value || "open_first";
+        renderProjects();
+      });
+
+      document.getElementById("workspace-select")?.addEventListener("change", (e) => {
+        activeWorkspace = e.target.value;
+        renderProjects();
+      });
+
+      document.getElementById("search-input")?.addEventListener("input", (e) => {
+        searchQuery = e.target.value.trim().toLowerCase();
+        renderProjects();
+      });
+
+      document.getElementById("archive-done-btn")?.addEventListener("click", () => {
+        postAction(
+          { action: "archive_all_done" },
+          "📦 Completed Projects Archived",
+          "Moved all completed projects into odin-states/archive/.",
+          "done"
+        );
+      });
+
+      // Audio & Theme Controls
+      const muteBtn = document.getElementById("mute-btn");
+      function renderMute() {
+        if (muteBtn) muteBtn.textContent = isMuted ? "🔇 Muted" : "🔊 Sound: ON";
+      }
+      renderMute();
+      muteBtn?.addEventListener("click", () => {
+        isMuted = !isMuted;
+        localStorage.setItem(MUTE_KEY, String(isMuted));
+        renderMute();
+        if (!isMuted) playGjallarhorn("phase");
+      });
+
+      document.getElementById("enable-alerts-btn")?.addEventListener("click", async () => {
+        ensureAudio();
+        if ("Notification" in window && Notification.permission !== "granted") {
+          try { await Notification.requestPermission(); } catch {}
+        }
+        notifyUser("⚡ Gjallarhorn Ready", "Dashboard audio chimes & desktop notifications enabled!", "done");
+      });
+
+      const savedTheme = localStorage.getItem(THEME_KEY) || "dark";
+      document.documentElement.setAttribute("data-theme", savedTheme);
+      document.getElementById("theme-btn")?.addEventListener("click", () => {
+        const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+        document.documentElement.setAttribute("data-theme", next);
+        localStorage.setItem(THEME_KEY, next);
+      });
+
+      // Telemetry Controls
+      const TELEMETRY_COLLAPSED_KEY = "odin_telemetry_collapsed_v1";
+      const telemetryBody = document.getElementById("telemetry-body");
+      const toggleTelemetryBtn = document.getElementById("toggle-telemetry-btn");
+      let isTelemetryCollapsed = localStorage.getItem(TELEMETRY_COLLAPSED_KEY) === "true";
+      function renderTelemetryCollapse() {
+        if (!telemetryBody || !toggleTelemetryBtn) return;
+        telemetryBody.hidden = isTelemetryCollapsed;
+        toggleTelemetryBtn.setAttribute("aria-expanded", String(!isTelemetryCollapsed));
+        toggleTelemetryBtn.textContent = isTelemetryCollapsed ? "▸ Show Matrix" : "▾ Hide Matrix";
+      }
+      renderTelemetryCollapse();
+      toggleTelemetryBtn?.addEventListener("click", () => {
+        isTelemetryCollapsed = !isTelemetryCollapsed;
+        localStorage.setItem(TELEMETRY_COLLAPSED_KEY, String(isTelemetryCollapsed));
+        renderTelemetryCollapse();
+      });
+      document.getElementById("refresh-telemetry-btn")?.addEventListener("click", () => {
+        fetchTelemetry(true);
+      });
+
+      // Staging (:8789) & Watcher Pause Controls
+      const stagingBanner = document.getElementById("staging-mode-banner");
+      if (location.port === "8789") {
+        if (stagingBanner) stagingBanner.style.display = "flex";
+        document.title = "🧪 [STAGING :8789] " + document.title.replace(/^🧪 \[STAGING :8789\]\s*/, "");
+        const brandTitle = document.querySelector(".brand-title");
+        if (brandTitle && !brandTitle.textContent.includes("STAGING :8789")) {
+          brandTitle.textContent = "🧪 [STAGING :8789] ODIN REALM COMMAND DASHBOARD";
+        }
+        const openStagingBtn = document.getElementById("open-staging-btn");
+        if (openStagingBtn) {
+          openStagingBtn.style.display = "none";
+        }
+      }
+      const stagingDialog = document.getElementById("staging-dialog");
+      if (stagingDialog && !("closedBy" in HTMLDialogElement.prototype)) {
+        stagingDialog.addEventListener("click", (event) => {
+          const rect = stagingDialog.getBoundingClientRect();
+          const clickedInDialog =
+            rect.top <= event.clientY &&
+            event.clientY <= rect.top + rect.height &&
+            rect.left <= event.clientX &&
+            event.clientX <= rect.left + rect.width;
+          if (!clickedInDialog) stagingDialog.close();
+        });
+      }
+      document.getElementById("close-staging-btn")?.addEventListener("click", () => {
+        stagingDialog?.close();
+      });
+      document.getElementById("toggle-pause-btn")?.addEventListener("click", async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        try {
+          const res = await postAction({ action: "toggle_pause" });
+          const paused = res.pauseState?.paused;
+          btn.textContent = paused ? "▶️ Resume Watchers" : "⏸️ Pause Watchers";
+          notifyUser(paused ? "⏸️ Watchers Paused" : "▶️ Watchers Resumed", paused ? "Live reactive watchers are paused." : "Live reactive watchers are armed.", "phase");
+        } catch (err) {
+          alert("Pause Toggle Error: " + (err.message || err));
+        } finally {
+          btn.disabled = false;
+        }
+      });
+      async function runSnapshotStaging(btn) {
+        const orig = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "⏳ Snapshotting...";
+        try {
+          const activeProj = allProjects.find((p) => !p.archived && p.overallStatus !== "done") || allProjects[0];
+          const res = await fetch(`${API_BASE}/api/projects/action`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "snapshot_staging", id: activeProj ? activeProj.id : "" })
+          });
+          const data = await res.json();
+          if (!data.ok) throw new Error(data.error || "Failed to snapshot staging");
+          const ta = document.getElementById("staging-prompt-textarea");
+          const link = document.getElementById("staging-open-link");
+          const pauseBtn = document.getElementById("toggle-pause-btn");
+          if (ta) ta.value = data.debugPrompt || "";
+          if (link) link.href = data.stagingStateUrl || data.stagingUrl || "http://127.0.0.1:8789/";
+          if (pauseBtn) pauseBtn.textContent = "▶️ Resume Watchers";
+          if (data.debugPrompt && navigator.clipboard) {
+            try { await navigator.clipboard.writeText(data.debugPrompt); } catch {}
+          }
+          if (location.port === "8789") {
+            notifyUser("🔄 Staging Re-Snapshotted from Live (:8788)", "Reset staging/odin-8789 to main and refreshed odin-states/.", "done");
+            setTimeout(() => location.reload(), 650);
+          } else {
+            stagingDialog?.showModal();
+            fetchProjects(false);
+          }
+        } catch (err) {
+          alert("Staging Snapshot Error: " + (err.message || err));
+        } finally {
+          btn.textContent = orig;
+          btn.disabled = false;
+        }
+      }
+      document.getElementById("open-staging-btn")?.addEventListener("click", (e) => runSnapshotStaging(e.currentTarget));
+      document.getElementById("banner-resnapshot-staging-btn")?.addEventListener("click", (e) => {
+        if (!confirm("Reset staging/odin-8789 to Live (main) and re-snapshot all odin-states/ from :8788?")) return;
+        runSnapshotStaging(e.currentTarget);
+      });
+      document.getElementById("copy-staging-prompt-btn")?.addEventListener("click", async (e) => {
+        const btn = e.currentTarget;
+        const ta = document.getElementById("staging-prompt-textarea");
+        if (ta && navigator.clipboard) {
+          await navigator.clipboard.writeText(ta.value || "");
+          const orig = btn.textContent;
+          btn.textContent = "✅ Debug Prompt Copied!";
+          setTimeout(() => { btn.textContent = orig; }, 1800);
+        }
+      });
+      async function runPromoteStaging(btn) {
+        if (!confirm("Commit staging changes on staging/odin-8789, fast-forward merge into Live (main :8788), and resume watchers?")) return;
+        btn.disabled = true;
+        try {
+          await postAction({ action: "promote_staging" });
+          const pauseBtn = document.getElementById("toggle-pause-btn");
+          if (pauseBtn) pauseBtn.textContent = "⏸️ Pause Watchers";
+          stagingDialog?.close();
+          notifyUser("🚀 Staging Promoted to Live (:8788)", "Merged staging/odin-8789 into main, restarted :8788 & :8789, and resumed watchers.", "done");
+          if (location.port === "8789") {
+            setTimeout(() => { location.href = "http://127.0.0.1:8788/"; }, 650);
+          } else {
+            setTimeout(() => fetchProjects(true), 700);
+          }
+        } catch (err) {
+          alert("Promote Staging Error: " + (err.message || err));
+        } finally {
+          btn.disabled = false;
+        }
+      }
+      document.getElementById("banner-promote-staging-btn")?.addEventListener("click", (e) => runPromoteStaging(e.currentTarget));
+
+      window.addEventListener("click", () => ensureAudio(), { once: true });
+
+      fetchProjects(true);
+      fetchTelemetry(false);
+      setInterval(() => fetchProjects(true), 3000);
+    })();
+  </script>
+</body>
+</html>

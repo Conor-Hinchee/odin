@@ -1,0 +1,41 @@
+{
+  "root": "~/code",
+  "ports": { "live": 8788, "staging": 8789 },
+  "repos": {
+    "web": {
+      "path": "~/code/web",
+      "base_branch": "origin/main",
+      "port_range": [8080, 8099],
+      "role": "frontend",
+      "start": "PORT={port} API_URL=http://localhost:{backend_port} npm run dev",
+      "copy_paths": ["node_modules"]
+    },
+    "api": {
+      "path": "~/code/api",
+      "base_branch": "origin/main",
+      "port_range": [3001, 3099],
+      "role": "backend",
+      "start": "PORT={port} npm start"
+    }
+  },
+  "skill_pills": [
+    { "id": "/code-review", "label": "/code-review", "desc": "Review the current diff for bugs" },
+    { "id": "/simplify", "label": "/simplify", "desc": "Clean up the changed code" }
+  ],
+  "telemetry": {
+    "title": "Deployed Versions",
+    "command": "my-deploy-cli status --json",
+    "columns": [ { "key": "web", "label": "Web" }, { "key": "api", "label": "API" } ]
+  },
+  "pr": {
+    "label": "ai-generated",
+    "heading": "## 🤖 Session Telemetry",
+    "require_prompt_summary": true,
+    "sanitize_hash_refs": true
+  },
+  "staging": {
+    "repo_dir": "~/code/odin",
+    "staging_dir": "~/code/odin-staging",
+    "branch": "staging/odin-8789"
+  }
+}

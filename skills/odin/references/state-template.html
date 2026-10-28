@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>⚡ Odin Command Center — <Task Name></title>
+  <link id="odin-favicon" rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%23f59e0b'/%3E%3Cstop offset='100%25' stop-color='%2338bdf8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpolygon points='32,3 58,18 58,46 32,61 6,46 6,18' fill='%230b1120' stroke='url(%23g)' stroke-width='4'/%3E%3Cpath d='M32 13 L47 41 H17 Z M32 23 L42 46 H22 Z' fill='none' stroke='%23f59e0b' stroke-width='3.2' stroke-linejoin='round'/%3E%3Ccircle id='orb' cx='50' cy='14' r='8' fill='%2338bdf8' stroke='%230b1120' stroke-width='2.5'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg-light: #f8fafc;
+      --bg-dark: #070b14;
+      --surface-light: #ffffff;
+      --surface-dark: #0f172a;
+      --surface-elevated-light: #f1f5f9;
+      --surface-elevated-dark: #162038;
+      --text-light: #0f172a;
+      --text-dark: #e2e8f0;
+      --muted-light: #475569;
+      --muted-dark: #94a3b8;
+      --border-light: #cbd5e1;
+      --border-dark: #1e293b;
+      --gold: #f59e0b;
+      --cyan: #38bdf8;
+      --emerald: #10b981;
+      --crimson: #f43f5e;
+      --violet: #a855f7;
+
+      --bg: var(--bg-dark);
+      --surface: var(--surface-dark);
+      --surface-elevated: var(--surface-elevated-dark);
+      --text: var(--text-dark);
+      --muted: var(--muted-dark);
+      --border: var(--border-dark);
+    }
+
+    html[data-theme="light"] {
+      color-scheme: light;
+      --bg: var(--bg-light);
+      --surface: var(--surface-light);
+      --surface-elevated: var(--surface-elevated-light);
+      --text: var(--text-light);
+      --muted: var(--muted-light);
+      --border: var(--border-light);
+      --gold: #b45309;
+      --cyan: #0369a1;
+      --emerald: #047857;
+      --crimson: #be123c;
+      --violet: #7e22ce;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background:
+        radial-gradient(circle at 12% 0%, rgba(56, 189, 248, 0.12), transparent 38%),
+        radial-gradient(circle at 88% 4%, rgba(245, 158, 11, 0.10), transparent 36%),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+      min-height: 100vh;
+      padding-bottom: 4rem;
+    }
+
+    h1, h2, h3, h4, th {
+      text-wrap: balance;
+      margin-top: 0;
+      letter-spacing: -0.02em;
+    }
+
+    p, li, td, blockquote {
+      text-wrap: pretty;
+    }
+
+    /* Sticky Asgardian Top Command Bar */
+    .odin-header {
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      backdrop-filter: blur(16px);
+      background: color-mix(in srgb, var(--surface) 85%, transparent);
+      border-bottom: 1px solid var(--border);
+      padding: 0.9rem 1.5rem;
+    }
+
+    .odin-header-inner {
+      max-width: 1120px;
+      margin: 0 auto;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
+
+    .brand-crest {
+      width: 40px;
+      height: 40px;
+      flex-shrink: 0;
+      filter: drop-shadow(0 0 10px rgba(245, 158, 11, 0.35));
+    }
+
+    .brand-title {
+      font-size: 1.15rem;
+      font-weight: 800;
+      margin: 0;
+      background: linear-gradient(90deg, var(--gold), var(--cyan));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .brand-subtitle {
+      font-size: 0.78rem;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+    }
+
+    .btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--surface-elevated);
+      color: var(--text);
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 0.42rem 0.78rem;
+      border-radius: 999px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      transition: all 0.18s ease;
+    }
+
+    .btn:hover {
+      border-color: var(--cyan);
+      transform: translateY(-1px);
+    }
+
+    .btn-gold {
+      border-color: rgba(245, 158, 11, 0.45);
+      background: rgba(245, 158, 11, 0.14);
+      color: var(--gold);
+    }
+
+    .sync-pill {
+      font-size: 0.74rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      padding: 0.35rem 0.7rem;
+      border-radius: 999px;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      color: var(--emerald);
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: pulse 1.8s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.25); }
+    }
+
+    /* Main Container */
+    .container {
+      max-width: 1120px;
+      margin: 1.75rem auto 0;
+      padding: 0 1.5rem;
+    }
+
+    /* 5-Phase Bifrost Stepper */
+    .bifrost-stepper {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 0.85rem;
+      margin-bottom: 2rem;
+    }
+
+    @media (max-width: 760px) {
+      .bifrost-stepper { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    .step-node {
+      text-decoration: none;
+      color: inherit;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 0.85rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.18s ease, border-color 0.18s ease;
+    }
+
+    .step-node:hover { transform: translateY(-2px); border-color: var(--cyan); }
+    .step-node[data-step-status="done"] { border-color: rgba(16, 185, 129, 0.55); background: linear-gradient(180deg, rgba(16, 185, 129, 0.08), var(--surface)); }
+    .step-node[data-step-status="active"] { border-color: rgba(56, 189, 248, 0.75); box-shadow: 0 0 20px rgba(56, 189, 248, 0.14); }
+    .step-node[data-step-status="awaiting_human"] { border-color: rgba(245, 158, 11, 0.85); background: linear-gradient(180deg, rgba(245, 158, 11, 0.14), var(--surface)); box-shadow: 0 0 22px rgba(245, 158, 11, 0.22); }
+    .step-node[data-step-status="reject"] { border-color: rgba(244, 63, 94, 0.7); }
+
+    .step-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.74rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    .step-name {
+      font-size: 0.96rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    /* Phase Sections */
+    section[id] {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--muted);
+      border-radius: 16px;
+      padding: 1.5rem 1.75rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 10px 30px -15px rgba(0, 0, 0, 0.45);
+      transition: border-color 0.25s ease, box-shadow 0.25s ease;
+    }
+
+    section[data-status="active"] {
+      border-left-color: var(--cyan);
+      box-shadow: 0 0 28px -8px rgba(56, 189, 248, 0.25);
+    }
+
+    section[data-status="awaiting_human"] {
+      border-left-color: var(--gold);
+      box-shadow: 0 0 28px -8px rgba(245, 158, 11, 0.30);
+    }
+
+    section[data-status="done"] {
+      border-left-color: var(--emerald);
+    }
+
+    section[data-status="reject"] {
+      border-left-color: var(--crimson);
+      box-shadow: 0 0 28px -8px rgba(244, 63, 94, 0.25);
+    }
+
+    .phase-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .phase-title {
+      font-size: 1.2rem;
+      font-weight: 700;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+    }
+
+    /* Status Badges */
+    .badge-done, .badge-active, .badge-pending, .badge-reject, .badge-awaiting_human {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.22rem 0.68rem;
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .badge-done { background: rgba(16, 185, 129, 0.16); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
+    .badge-active { background: rgba(56, 189, 248, 0.16); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.45); }
+    .badge-awaiting_human { background: rgba(245, 158, 11, 0.18); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.55); }
+    .badge-pending { background: rgba(148, 163, 184, 0.14); color: var(--muted); border: 1px solid rgba(148, 163, 184, 0.28); }
+    .badge-reject { background: rgba(244, 63, 94, 0.16); color: #fb7185; border: 1px solid rgba(244, 63, 94, 0.45); }
+
+    html[data-theme="light"] .badge-done { background: rgba(16, 185, 129, 0.14); color: #065f46; border-color: rgba(5, 150, 105, 0.45); }
+    html[data-theme="light"] .badge-active { background: rgba(14, 165, 233, 0.14); color: #075985; border-color: rgba(2, 132, 199, 0.45); }
+    html[data-theme="light"] .badge-awaiting_human { background: rgba(245, 158, 11, 0.18); color: #92400e; border-color: rgba(217, 119, 6, 0.55); }
+    html[data-theme="light"] .badge-reject { background: rgba(244, 63, 94, 0.14); color: #9f1239; border-color: rgba(225, 29, 72, 0.45); }
+
+    .open-questions-box {
+      background: rgba(245, 158, 11, 0.10);
+      border: 1px solid rgba(245, 158, 11, 0.45);
+      border-left: 4px solid var(--gold);
+      border-radius: 12px;
+      padding: 1rem 1.2rem;
+      margin: 0.75rem 0 1.25rem;
+    }
+
+    html[data-theme="light"] .open-questions-box {
+      background: rgba(245, 158, 11, 0.12);
+      border-color: rgba(217, 119, 6, 0.55);
+      color: #78350f;
+    }
+
+    details.odin-iteration-card {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin: 0.85rem 0;
+      overflow: hidden;
+    }
+
+    details.odin-iteration-card[open] {
+      border-color: rgba(56, 189, 248, 0.45);
+    }
+
+    details.odin-iteration-card > summary {
+      cursor: pointer;
+      padding: 0.75rem 1rem;
+      font-weight: 700;
+      font-size: 0.92rem;
+      background: var(--surface-elevated);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      user-select: none;
+    }
+
+    details.odin-iteration-card > .iteration-body {
+      padding: 0.9rem 1.15rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .harness-delta-card {
+      background: rgba(168, 85, 247, 0.08);
+      border: 1px solid rgba(168, 85, 247, 0.4);
+      border-left: 4px solid var(--violet);
+      border-radius: 12px;
+      padding: 0.9rem 1.15rem;
+      margin: 0.85rem 0;
+    }
+
+    /* Tables & Code */
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 1rem 0;
+      font-size: 0.9rem;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    th, td {
+      border: 1px solid var(--border);
+      padding: 0.65rem 0.9rem;
+      text-align: left;
+    }
+
+    th {
+      background: var(--surface-elevated);
+      font-weight: 700;
+      color: var(--gold);
+    }
+
+    pre, code {
+      color-scheme: only dark;
+      background: #090d16;
+      color: #e2e8f0;
+      accent-color: var(--cyan);
+      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.84rem;
+      border-radius: 6px;
+    }
+
+    code { padding: 0.15rem 0.4rem; border: 1px solid #1e293b; }
+    pre { padding: 1rem; overflow-x: auto; border: 1px solid #1e293b; }
+    pre code { border: none; padding: 0; background: transparent; }
+
+    /* Top-Layer Manual Popover Toast Notifications */
+    .odin-toast[popover] {
+      position: fixed;
+      inset: 1.25rem 1.25rem auto auto;
+      margin: 0;
+      width: min(380px, calc(100vw - 2.5rem));
+      background: var(--surface-elevated);
+      color: var(--text);
+      border: 1px solid var(--gold);
+      border-left: 5px solid var(--gold);
+      border-radius: 14px;
+      padding: 0.95rem 1.1rem;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.55);
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem;
+      opacity: 0;
+      transform: translateY(-10px) scale(0.97);
+      transition: opacity 0.22s ease, transform 0.22s ease, overlay 0.22s allow-discrete, display 0.22s allow-discrete;
+    }
+
+    .odin-toast[popover]:popover-open {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+
+    @starting-style {
+      .odin-toast[popover]:popover-open {
+        opacity: 0;
+        transform: translateY(-10px) scale(0.97);
+      }
+    }
+
+    .odin-toast + .odin-toast { margin-top: 4.5rem; }
+
+    .toast-close {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 1rem;
+      line-height: 1;
+      padding: 0.2rem;
+    }
+  </style>
+</head>
+<body data-branch="feat/<task-slug>" data-worktree="<absolute-worktree-path>" data-app-port="<app-port>" data-backend-port="<backend-port>" data-session-id="<session-id>">
+  <header class="odin-header">
+    <div class="odin-header-inner">
+      <div class="brand">
+        <svg class="brand-crest" viewBox="0 0 64 64" aria-hidden="true">
+          <defs>
+            <linearGradient id="odinGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#f59e0b"/>
+              <stop offset="100%" stop-color="#38bdf8"/>
+            </linearGradient>
+          </defs>
+          <polygon points="32,3 58,18 58,46 32,61 6,46 6,18" fill="#0b1120" stroke="url(#odinGrad)" stroke-width="3.5"/>
+          <path d="M32 13 L47 41 H17 Z M32 23 L42 46 H22 Z" fill="none" stroke="#f59e0b" stroke-width="3" stroke-linejoin="round"/>
+        </svg>
+        <div>
+          <h1 class="brand-title">ODIN ALLFATHER — <Task Name></h1>
+          <div class="brand-subtitle" id="odin-meta">slug: <task-slug> • updated: <span id="odin-timestamp">just now</span></div>
+          <div id="odin-env-bar" style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-top:0.35rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.72rem;color:var(--muted);">
+            <span style="padding:0.12rem 0.45rem;border-radius:6px;background:rgba(168,85,247,0.12);border:1px solid rgba(168,85,247,0.3);color:var(--violet);">🌿 feat/<task-slug></span>
+            <span style="padding:0.12rem 0.45rem;border-radius:6px;background:rgba(56,189,248,0.1);border:1px solid rgba(56,189,248,0.28);color:var(--cyan);">🗂️ &lt;repo&gt;</span>
+            <span style="padding:0.12rem 0.45rem;border-radius:6px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.28);color:var(--emerald);">🌐 app :&lt;app-port&gt;</span>
+            <span style="padding:0.12rem 0.45rem;border-radius:6px;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.28);color:var(--gold);">🧩 backend :&lt;backend-port&gt;</span>
+          </div>
+        </div>
+      </div>
+      <div class="controls">
+        <a class="btn" href="/" onclick="if(location.protocol==='file:'){location.href='http://127.0.0.1:8788/';return false;}" style="text-decoration:none">🏛️ All Projects</a>
+        <span class="sync-pill" id="odin-sync-pill"><span class="pulse-dot"></span> <span id="odin-sync-text">Live Sync (2.5s)</span></span>
+        <button type="button" class="btn btn-gold" id="odin-enable-alerts">🔔 Enable Alerts &amp; Test Horn</button>
+        <button type="button" class="btn" id="odin-mute-btn">🔊 Sound: ON</button>
+        <button type="button" class="btn" id="odin-theme-btn">☀️ Theme</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <nav class="bifrost-stepper" aria-label="Odin Workflow Phases">
+      <a class="step-node" href="#huginn-plan" id="step-huginn" data-step-status="pending">
+        <div class="step-top"><span>Phase I</span><span class="step-state">Pending</span></div>
+        <div class="step-name">🪶 Huginn Plan</div>
+      </a>
+      <a class="step-node" href="#thor-execution" id="step-thor" data-step-status="pending">
+        <div class="step-top"><span>Phase II</span><span class="step-state">Pending</span></div>
+        <div class="step-name">⚡ Thor &amp; Valkyries</div>
+      </a>
+      <a class="step-node" href="#heimdall-validation" id="step-heimdall" data-step-status="pending">
+        <div class="step-top"><span>Phase III</span><span class="step-state">Pending</span></div>
+        <div class="step-name">🛡️ Heimdall Gate</div>
+      </a>
+      <a class="step-node" href="#hlidskjalf-judge" id="step-hlidskjalf" data-step-status="pending">
+        <div class="step-top"><span>Phase IV</span><span class="step-state">Pending</span></div>
+        <div class="step-name">👁️ Hlidskjalf Retro</div>
+      </a>
+      <a class="step-node" href="#human-validation" id="step-human" data-step-status="pending">
+        <div class="step-top"><span>Phase V</span><span class="step-state">Pending</span></div>
+        <div class="step-name">👑 Human Validation</div>
+      </a>
+    </nav>
+
+    <section id="huginn-plan" data-status="active">
+      <div class="phase-header">
+        <h2 class="phase-title">🪶 Phase 1: Huginn (Planner &amp; Architect)</h2>
+        <span class="badge-active">ACTIVE</span>
+      </div>
+      <div class="phase-body">
+        <!-- Plan, Test Strategy, DoD, Subagent Matrix -->
+      </div>
+    </section>
+
+    <section id="thor-execution" data-status="pending">
+      <div class="phase-header">
+        <h2 class="phase-title">⚡ Phase 2: Thor &amp; The Valkyrie Squad (Execution)</h2>
+        <span class="badge-pending">PENDING</span>
+      </div>
+      <details class="odin-iteration-card" data-iteration="1" open>
+        <summary><span>🔄 Iteration 1 — Initial Execution</span><span class="badge-pending">PENDING</span></summary>
+        <div class="iteration-body">
+          <!-- Execution logs, Valkyrie reports, test outcomes -->
+        </div>
+      </details>
+    </section>
+
+    <section id="heimdall-validation" data-status="pending">
+      <div class="phase-header">
+        <h2 class="phase-title">🛡️ Phase 3: Heimdall (Validation Sentinel)</h2>
+        <span class="badge-pending">PENDING</span>
+      </div>
+      <details class="odin-iteration-card" data-iteration="1" open>
+        <summary><span>🔄 Iteration 1 — Sentinel Gate</span><span class="badge-pending">PENDING</span></summary>
+        <div class="iteration-body">
+          <!-- Gate validation, checklist verification -->
+        </div>
+      </details>
+    </section>
+
+    <section id="hlidskjalf-judge" data-status="pending">
+      <div class="phase-header">
+        <h2 class="phase-title">👁️ Phase 4: Hlidskjalf (High Seat Retrospective)</h2>
+        <span class="badge-pending">PENDING</span>
+      </div>
+      <details class="odin-iteration-card" data-iteration="1" open>
+        <summary><span>🔄 Iteration 1 — Retrospective &amp; Harness Deltas</span><span class="badge-pending">PENDING</span></summary>
+        <div class="iteration-body">
+          <!-- Efficiency review, retrospective & harness_delta_proposals -->
+        </div>
+      </details>
+    </section>
+
+    <section id="human-validation" data-status="pending" data-human-note="">
+      <div class="phase-header">
+        <h2 class="phase-title">👑 Phase 5: Human Validation (Sign-Off &amp; Rejection Notes)</h2>
+        <span class="badge-pending">PENDING</span>
+      </div>
+      <p>Awaiting human sign-off or rejection note from the Odin Realm Command Dashboard (<code>http://127.0.0.1:8788/</code>).</p>
+    </section>
+  </main>
+
+  <div id="odin-toast" class="odin-toast" popover="manual" role="status" aria-live="polite">
+    <div>
+      <strong id="odin-toast-title" style="display:block;color:var(--gold);font-size:0.88rem;">⚡ Odin Update</strong>
+      <span id="odin-toast-body" style="font-size:0.82rem;color:var(--text);">Phase transition recorded.</span>
+    </div>
+    <button type="button" class="toast-close" popovertarget="odin-toast" popovertargetaction="hide" aria-label="Close notification">✕</button>
+  </div>
+
+  <script>
+    (() => {
+      const BASE_TITLE = document.title.replace(/^(\S+\s+\[[^\]]+\]\s*)/, "");
+      const SLUG = location.pathname.split("/").pop() || "odin-state.html";
+      const STORAGE_KEY = "odin_phase_state_" + SLUG;
+      const MUTE_KEY = "odin_sound_muted";
+      const THEME_KEY = "odin_ui_theme";
+      const PHASES = [
+        { id: "huginn-plan", stepId: "step-huginn", label: "Phase 1: Huginn" },
+        { id: "thor-execution", stepId: "step-thor", label: "Phase 2: Thor & Valkyries" },
+        { id: "heimdall-validation", stepId: "step-heimdall", label: "Phase 3: Heimdall" },
+        { id: "hlidskjalf-judge", stepId: "step-hlidskjalf", label: "Phase 4: Hlidskjalf" },
+        { id: "human-validation", stepId: "step-human", label: "Phase 5: Human Validation" }
+      ];
+
+      let audioCtx = null;
+      let isMuted = localStorage.getItem(MUTE_KEY) === "true";
+      let toastTimer = null;
+
+      function ensureAudio() {
+        if (!audioCtx) {
+          const Ctx = window.AudioContext || window.webkitAudioContext;
+          if (Ctx) audioCtx = new Ctx();
+        }
+        if (audioCtx && audioCtx.state === "suspended") {
+          audioCtx.resume().catch(() => {});
+        }
+        return audioCtx;
+      }
+
+      // Synthesize Norse Gjallarhorn / Bifrost Chime using Web Audio API
+      function playGjallarhorn(kind = "phase") {
+        if (isMuted) return;
+        const ctx = ensureAudio();
+        if (!ctx) return;
+
+        const now = ctx.currentTime;
+        const notes = kind === "done"
+          ? [523.25, 659.25, 783.99, 1046.5] // C5 -> E5 -> G5 -> C6 fanfare
+          : kind === "reject"
+          ? [220, 185]                       // A3 -> F#3 alert
+          : kind === "awaiting_human"
+          ? [587.33, 440, 587.33]            // D5 -> A4 -> D5 question chime
+          : [440, 659.25];                   // A4 -> E5 phase chime
+
+        notes.forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = kind === "reject" ? "sawtooth" : "triangle";
+          osc.frequency.setValueAtTime(freq, now + i * 0.11);
+
+          gain.gain.setValueAtTime(0.0001, now + i * 0.11);
+          gain.gain.exponentialRampToValueAtTime(0.18, now + i * 0.11 + 0.025);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.11 + 0.42);
+
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now + i * 0.11);
+          osc.stop(now + i * 0.11 + 0.45);
+        });
+      }
+
+      function showToast(title, body) {
+        const toast = document.getElementById("odin-toast");
+        if (!toast) return;
+        document.getElementById("odin-toast-title").textContent = title;
+        document.getElementById("odin-toast-body").textContent = body;
+        if (typeof toast.showPopover === "function") {
+          try { toast.hidePopover(); } catch {}
+          try { toast.showPopover(); } catch {}
+          clearTimeout(toastTimer);
+          toastTimer = setTimeout(() => {
+            try { toast.hidePopover(); } catch {}
+          }, 5000);
+        }
+      }
+
+      function notifyUser(title, body, kind = "phase") {
+        playGjallarhorn(kind);
+        showToast(title, body);
+        if ("Notification" in window && Notification.permission === "granted") {
+          try {
+            const n = new Notification(title, {
+              body,
+              icon: document.getElementById("odin-favicon")?.href,
+              tag: "odin-" + SLUG + "-" + Date.now()
+            });
+            n.onclick = () => window.focus();
+          } catch {}
+        }
+      }
+
+      function updateFaviconAndTitle(overallStatus) {
+        const colors = { done: "%2310b981", awaiting_signoff: "%23f59e0b", active: "%2338bdf8", awaiting_human: "%23f59e0b", reject: "%23f43f5e", pending: "%2394a3b8" };
+        const prefixes = { done: "✅ [DONE] ", awaiting_signoff: "👑 [AWAITING SIGN-OFF] ", active: "⚡ [ACTIVE] ", awaiting_human: "❓ [OPEN QUESTIONS] ", reject: "🚨 [REJECT] ", pending: "⏳ " };
+        const orbColor = colors[overallStatus] || colors.active;
+        const link = document.getElementById("odin-favicon");
+        if (link) {
+          link.href = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%23f59e0b'/%3E%3Cstop offset='100%25' stop-color='%2338bdf8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpolygon points='32,3 58,18 58,46 32,61 6,46 6,18' fill='%230b1120' stroke='url(%23g)' stroke-width='4'/%3E%3Cpath d='M32 13 L47 41 H17 Z M32 23 L42 46 H22 Z' fill='none' stroke='%23f59e0b' stroke-width='3.2' stroke-linejoin='round'/%3E%3Ccircle cx='50' cy='14' r='9' fill='${orbColor}' stroke='%230b1120' stroke-width='2.5'/%3E%3C/svg%3E`;
+        }
+        document.title = (prefixes[overallStatus] || "") + BASE_TITLE;
+      }
+
+      function inferSectionStatus(sec) {
+        if (!sec) return "pending";
+        const explicit = (sec.getAttribute("data-status") || "").toLowerCase();
+        if (["done", "active", "awaiting_human", "reject", "pending"].includes(explicit) && explicit !== "pending") return explicit;
+        if (sec.querySelector(".badge-reject")) return "reject";
+        if (sec.querySelector(".badge-awaiting_human") || sec.querySelector(".open-questions-box:not([data-resolved='true'])")) return "awaiting_human";
+        if (sec.querySelector(".badge-done")) return "done";
+        if (sec.querySelector(".badge-active")) return "active";
+        return explicit || "pending";
+      }
+
+      function syncStepperAndDiff(triggerAlerts = true) {
+        const prevRaw = sessionStorage.getItem(STORAGE_KEY);
+        const prev = prevRaw ? JSON.parse(prevRaw) : null;
+        const current = {};
+        let overall = "pending";
+
+        PHASES.forEach(({ id, stepId, label }) => {
+          const sec = document.getElementById(id);
+          const status = inferSectionStatus(sec);
+          if (sec) sec.setAttribute("data-status", status);
+          const stepEl = document.getElementById(stepId);
+          if (stepEl) {
+            stepEl.setAttribute("data-step-status", status);
+            const stateSpan = stepEl.querySelector(".step-state");
+            if (stateSpan) {
+              stateSpan.textContent = status === "awaiting_human"
+                ? (id === "human-validation" ? "👑 AWAITING SIGN-OFF" : "OPEN QUESTIONS")
+                : status.toUpperCase();
+            }
+          }
+          current[id] = { status, len: sec ? sec.innerHTML.trim().length : 0 };
+
+          if (prev && triggerAlerts) {
+            const old = prev[id];
+            if (old && old.status !== status) {
+              if (status === "done") {
+                const isFinal = id === "heimdall-validation" || id === "hlidskjalf-judge" || id === "human-validation";
+                notifyUser(`⚡ ${label} Complete`, `${label} marked DONE.`, isFinal ? "done" : "phase");
+              } else if (status === "reject") {
+                notifyUser(`🚨 ${label} Rejected`, `${label} flagged issues for remediation.`, "reject");
+              } else if (status === "awaiting_human") {
+                if (id === "human-validation") {
+                  notifyUser(`👑 ${label} — Awaiting Sign-Off`, `All 4 AI phases complete; ready for final human sign-off.`, "awaiting_human");
+                } else {
+                  notifyUser(`❓ ${label} — Open Questions`, `${label} is awaiting human input in Claude Code.`, "awaiting_human");
+                }
+              } else if (status === "active") {
+                notifyUser(`⚡ ${label} Started`, `${label} is now in progress.`, "phase");
+              }
+            }
+          }
+        });
+
+        const aiPhaseIds = ["huginn-plan", "thor-execution", "heimdall-validation", "hlidskjalf-judge"];
+        const aiStatuses = aiPhaseIds.map(id => current[id]?.status || "pending");
+        const humanStatus = current["human-validation"]?.status || "pending";
+        const allStatuses = [...aiStatuses, humanStatus];
+        if (allStatuses.includes("reject")) overall = "reject";
+        else if (aiStatuses.includes("awaiting_human")) overall = "awaiting_human";
+        else if (aiStatuses.every(s => s === "done")) overall = (humanStatus === "done" ? "done" : "awaiting_signoff");
+        else if (aiStatuses.includes("active") || aiStatuses.includes("done")) overall = "active";
+
+        updateFaviconAndTitle(overall);
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(current));
+        const ts = document.getElementById("odin-timestamp");
+        if (ts) ts.textContent = new Date().toLocaleTimeString();
+      }
+
+      const lastServerSnapshots = {};
+      window.__odinResetServerSnapshot = (id) => {
+        if (id) delete lastServerSnapshots[id];
+      };
+
+      async function pollLatestState() {
+        if (window.__odinCoEditActive) return;
+        const activeEl = document.activeElement;
+        if (
+          activeEl &&
+          (activeEl.isContentEditable ||
+            activeEl.tagName === "TEXTAREA" ||
+            (activeEl.tagName === "INPUT" && activeEl.type !== "checkbox"))
+        ) {
+          return;
+        }
+
+        const urls = [];
+        if (location.protocol.startsWith("http")) {
+          urls.push(location.href.split("#")[0] + "?_t=" + Date.now());
+        } else {
+          urls.push(`http://127.0.0.1:8788/odin-states/${SLUG}?_t=${Date.now()}`);
+        }
+
+        for (const url of urls) {
+          try {
+            const res = await fetch(url, { cache: "no-store" });
+            if (!res.ok) continue;
+            const html = await res.text();
+            const doc = new DOMParser().parseFromString(html, "text/html");
+            let changed = false;
+
+            const inBanners = doc.getElementById("odin-top-command-banners");
+            const exBanners = document.getElementById("odin-top-command-banners");
+            if (inBanners && exBanners) {
+              ["odin-heimdall-gate-banner", "odin-top-signoff-banner", "odin-top-mimir-banner"].forEach((bId) => {
+                const inChild = doc.getElementById(bId);
+                const exChild = document.getElementById(bId);
+                const inHtml = inChild ? inChild.outerHTML : "";
+                if (!(bId in lastServerSnapshots)) {
+                  lastServerSnapshots[bId] = inHtml;
+                } else if (lastServerSnapshots[bId] !== inHtml) {
+                  lastServerSnapshots[bId] = inHtml;
+                  if (inChild && exChild) {
+                    exChild.outerHTML = inHtml;
+                  } else if (inChild && !exChild) {
+                    exBanners.insertAdjacentHTML("beforeend", inHtml);
+                  } else if (!inChild && exChild) {
+                    exChild.remove();
+                  }
+                }
+              });
+            }
+
+            PHASES.forEach(({ id }) => {
+              const incoming = doc.getElementById(id);
+              const existing = document.getElementById(id);
+              if (incoming && existing) {
+                const inStatus = incoming.getAttribute("data-status") || "";
+                const exStatus = existing.getAttribute("data-status") || "";
+                const sig = inStatus + "::" + incoming.innerHTML;
+                if (!(id in lastServerSnapshots)) {
+                  lastServerSnapshots[id] = sig;
+                  if (inStatus && inStatus !== exStatus) {
+                    existing.setAttribute("data-status", inStatus);
+                    changed = true;
+                  }
+                } else if (lastServerSnapshots[id] !== sig) {
+                  lastServerSnapshots[id] = sig;
+                  existing.innerHTML = incoming.innerHTML;
+                  if (inStatus) existing.setAttribute("data-status", inStatus);
+                  changed = true;
+                }
+              }
+            });
+
+            if (changed) syncStepperAndDiff(true);
+            return;
+          } catch {}
+        }
+      }
+
+      // Controls wiring
+      const muteBtn = document.getElementById("odin-mute-btn");
+      function renderMute() {
+        if (muteBtn) muteBtn.textContent = isMuted ? "🔇 Muted" : "🔊 Sound: ON";
+      }
+      renderMute();
+      muteBtn?.addEventListener("click", () => {
+        isMuted = !isMuted;
+        localStorage.setItem(MUTE_KEY, String(isMuted));
+        renderMute();
+        if (!isMuted) playGjallarhorn("phase");
+      });
+
+      document.getElementById("odin-enable-alerts")?.addEventListener("click", async () => {
+        ensureAudio();
+        if ("Notification" in window && Notification.permission !== "granted") {
+          try { await Notification.requestPermission(); } catch {}
+        }
+        notifyUser("⚡ Gjallarhorn Ready", "Live audio chimes & browser notifications are active!", "done");
+      });
+
+      const applyTheme = (theme, persist = false) => {
+        const resolved = theme === "light" ? "light" : "dark";
+        document.documentElement.setAttribute("data-theme", resolved);
+        const meta = document.querySelector('meta[name="color-scheme"]');
+        if (meta) meta.content = resolved;
+        const themeBtn = document.getElementById("odin-theme-btn");
+        if (themeBtn) {
+          themeBtn.setAttribute("aria-pressed", resolved === "light" ? "true" : "false");
+          themeBtn.textContent = resolved === "light" ? "🌙 Dark" : "☀️ Light";
+        }
+        if (persist) {
+          try { localStorage.setItem(THEME_KEY, resolved); } catch {}
+        }
+      };
+      let savedTheme = "dark";
+      try { savedTheme = localStorage.getItem(THEME_KEY) || "dark"; } catch {}
+      applyTheme(savedTheme, false);
+      document.getElementById("odin-theme-btn")?.addEventListener("click", () => {
+        const next = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
+        applyTheme(next, true);
+      });
+      window.addEventListener("storage", (e) => {
+        if (e.key === THEME_KEY) applyTheme(e.newValue === "light" ? "light" : "dark", false);
+      });
+
+      // Unlock Web Audio on any user click
+      window.addEventListener("click", () => ensureAudio(), { once: true });
+
+      syncStepperAndDiff(false);
+      setInterval(pollLatestState, 2500);
+    })();
+  </script>
+  <script type="application/json" id="odin-iteration-ledger">
+  {
+    "schema_version": 2,
+    "slug": "<task-slug>",
+    "current_iteration": 1,
+    "iterations": [
+      {
+        "iteration": 1,
+        "started_at": "2026-01-01T00:00:00Z",
+        "trigger": "initial",
+        "human_rejection_note": "",
+        "thor_summary": "",
+        "heimdall_verdict": "PENDING",
+        "root_cause": "",
+        "files_touched": []
+      }
+    ],
+    "harness_delta_proposals": []
+  }
+  </script>
+</body>
+</html>

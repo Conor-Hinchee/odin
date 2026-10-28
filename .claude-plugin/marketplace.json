@@ -1,0 +1,12 @@
+{
+  "name": "odin",
+  "description": "Odin plugin marketplace",
+  "owner": { "name": "Conor Hinchee", "url": "https://github.com/Conor-Hinchee" },
+  "plugins": [
+    {
+      "name": "odin",
+      "source": "./",
+      "description": "Five-phase agentic workflow with a live local dashboard and human-in-the-loop bridge."
+    }
+  ]
+}

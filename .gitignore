@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.DS_Store
+.odin-staging-meta.json
+odin-states/
+.odin/
+odin-staging/
