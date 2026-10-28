@@ -236,6 +236,8 @@ class TestOdin(unittest.TestCase):
             [sys.executable, str(SERVER_SCRIPT), "--port", str(ephemeral_port), "--dir", self.tmp.name],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            # Ignore the user's own config (e.g. TLS enabled) so the plain-HTTP probe below works.
+            env=dict(os.environ, XDG_CONFIG_HOME=self.tmp.name, ODIN_CONFIG=""),
         )
         try:
             payload = None

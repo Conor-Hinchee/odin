@@ -202,6 +202,89 @@ class TestServerGeneric(unittest.TestCase):
     def setUpClass(cls):
         cls.server = load_module("odin_server_generic_test", "odin-server.py")
 
+    def test_host_and_origin_guards(self):
+        s = self.server
+        for ok in ("127.0.0.1:8788", "localhost:8788", "[::1]:8788", "192.168.1.20:8788", "studio.local:8788", ""):
+            self.assertTrue(s.host_allowed(ok), ok)
+        # DNS rebinding: an attacker's domain resolving to 127.0.0.1 is refused.
+        self.assertFalse(s.host_allowed("evil.example.com:8788"))
+        with mock.patch.dict(s.CONFIG["server"], {"allowed_hosts": ["odin.home.arpa"]}):
+            self.assertTrue(s.host_allowed("odin.home.arpa:8788"))
+
+        self.assertTrue(s.origin_allowed(None, "127.0.0.1:8788"))
+        self.assertTrue(s.origin_allowed("https://192.168.1.20:8788", "192.168.1.20:8788"))
+        self.assertFalse(s.origin_allowed("https://evil.example.com", "127.0.0.1:8788"))
+        self.assertFalse(s.origin_allowed("null", "127.0.0.1:8788"))
+
+    def test_localize_links_and_base_url(self):
+        s = self.server
+        live, staging = s.PORT, s.STAGING_PORT
+        text = f"http://127.0.0.1:{live}/a.html http://127.0.0.1:{staging}/ http://127.0.0.1:3000/"
+        out = s.localize_links(text, f"192.168.1.20:{live}")
+        self.assertIn(f"http://192.168.1.20:{live}/a.html", out)
+        self.assertIn(f"http://192.168.1.20:{staging}/", out)
+        self.assertIn("http://127.0.0.1:3000/", out)  # dev-app ports are left alone
+        with mock.patch.dict(s.CONFIG["server"], {"cert": "/c.pem", "key": "/k.pem"}):
+            self.assertIn(f"https://192.168.1.20:{live}/", s.localize_links(f"http://127.0.0.1:{live}/", f"192.168.1.20:{live}"))
+            self.assertEqual(odin_config.base_url(s.CONFIG, 9000), "https://127.0.0.1:9000")
+        self.assertEqual(odin_config.base_url(s.CONFIG, 9000), "http://127.0.0.1:9000")
+
+    def test_tls_server_and_csrf_over_https(self):
+        import shutil
+        import socket
+        import ssl
+        import time
+        import urllib.error
+        import urllib.request
+
+        if not shutil.which("openssl"):
+            self.skipTest("openssl not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            cert, key = os.path.join(tmp, "c.pem"), os.path.join(tmp, "k.pem")
+            subprocess.run(
+                ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                 "-subj", "/CN=localhost", "-keyout", key, "-out", cert],
+                check=True, capture_output=True,
+            )
+            with socket.socket() as sock:
+                sock.bind(("127.0.0.1", 0))
+                port = sock.getsockname()[1]
+            env = dict(os.environ, XDG_CONFIG_HOME=tmp, ODIN_CONFIG="")
+            proc = subprocess.Popen(
+                [sys.executable, str(SCRIPTS / "odin-server.py"), "--port", str(port), "--dir", tmp,
+                 "--cert", cert, "--key", key],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
+            )
+            ctx = ssl.create_default_context(cafile=cert)
+            ctx.check_hostname = False
+
+            def call(path, data=None, headers=None):
+                req = urllib.request.Request(f"https://127.0.0.1:{port}{path}", data=data, headers=headers or {})
+                try:
+                    with urllib.request.urlopen(req, timeout=1, context=ctx) as resp:
+                        return resp.status, resp.headers
+                except urllib.error.HTTPError as err:
+                    return err.code, err.headers
+
+            try:
+                status = None
+                for _ in range(40):
+                    try:
+                        status, headers = call("/api/projects")
+                        break
+                    except Exception:
+                        time.sleep(0.1)
+                self.assertEqual(status, 200)
+                self.assertIsNone(headers.get("Access-Control-Allow-Origin"))
+                self.assertEqual(call("/api/projects", headers={"Host": "evil.example.com"})[0], 403)
+                body = b'{"scope": "*"}'
+                self.assertEqual(call("/api/presence", body, {"Origin": "https://evil.example.com"})[0], 403)
+                self.assertEqual(call("/api/presence", body, {"Origin": "null"})[0], 403)
+                self.assertEqual(call("/api/presence", body, {"Origin": f"https://127.0.0.1:{port}"})[0], 200)
+            finally:
+                proc.terminate()
+                proc.wait(timeout=3)
+
     def test_go_url_and_presence_coverage(self):
         root = self.server.ROOT_DIR
         state = os.path.join(root, "repo", "odin-states", "my task.html")

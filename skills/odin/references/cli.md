@@ -17,7 +17,7 @@ All commands are `python3 "${CLAUDE_SKILL_DIR}/scripts/odin-state.py" <command> 
 ## Server
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/scripts/odin-server.py" --dir <root> [--port 8788]
+python3 "${CLAUDE_SKILL_DIR}/scripts/odin-server.py" --dir <root> [--port 8788] [--host 0.0.0.0] [--cert odin.pem --key odin-key.pem]
 ```
 
 - `GET /`: dashboard of every `odin-states/*.html` up to three levels below `<root>` (archived files in `odin-states/archive/` included).
@@ -36,6 +36,6 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/odin-server.py" --dir <root> [--port 8788]
 
 ## Config
 
-`python3 "${CLAUDE_SKILL_DIR}/scripts/odin_config.py"` prints the merged config. Keys: `root`, `ports`, `repos`, `skill_pills`, `telemetry`, `pr`, `staging`. See `odin.config.example.json` in the repository.
+`python3 "${CLAUDE_SKILL_DIR}/scripts/odin_config.py"` prints the merged config; `--url` prints just the live server's base URL. Keys: `root`, `ports`, `server` (`host`, `cert`, `key`, `allowed_hosts`), `repos`, `skill_pills`, `telemetry`, `pr`, `staging`. See `odin.config.example.json` in the repository.
 
 `telemetry.command` is any shell command that prints a JSON array of row objects. The dashboard shows it as a table, with one row per object, `name` as the row label, and `columns: [{key, label}]` choosing the columns. A row named `latest` becomes the reference that other rows are compared to.

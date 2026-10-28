@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from odin_config import load_config, render_ports  # noqa: E402
+from odin_config import base_url, load_config, render_ports  # noqa: E402
 
 CONFIG = load_config()
 AI_DEV_ROOT = CONFIG["root"]
@@ -4438,7 +4438,7 @@ def sync_parent_mimir_delta_on_completion(
                 if d.get("status") != "applied" or d.get("spawned_ticket_id") != child_rel:
                     d["status"] = "applied"
                     d["spawned_ticket_id"] = child_rel
-                    d["spawned_ticket_url"] = f"http://127.0.0.1:{LIVE_PORT}/{child_rel}"
+                    d["spawned_ticket_url"] = f"{base_url(CONFIG)}/{child_rel}"
                     d["applied_at"] = now_iso()
                     d["updated_at"] = now_iso()
                     changed = True
@@ -4447,7 +4447,7 @@ def sync_parent_mimir_delta_on_completion(
             if d.get("status") != "applied" or d.get("spawned_ticket_id") != child_rel:
                 d["status"] = "applied"
                 d["spawned_ticket_id"] = child_rel
-                d["spawned_ticket_url"] = f"http://127.0.0.1:{LIVE_PORT}/{child_rel}"
+                d["spawned_ticket_url"] = f"{base_url(CONFIG)}/{child_rel}"
                 d["applied_at"] = now_iso()
                 d["updated_at"] = now_iso()
                 changed = True
@@ -4665,7 +4665,7 @@ def spawn_mimir_delta_ticket(
         child_rel = str(child_path.relative_to(Path(scan_root).resolve())).replace("\\", "/")
     except ValueError:
         child_rel = f"odin-states/{child_path.name}"
-    child_url = f"http://127.0.0.1:{LIVE_PORT}/{child_rel}"
+    child_url = f"{base_url(CONFIG)}/{child_rel}"
     try:
         parent_rel = str(parent_path.relative_to(Path(scan_root).resolve())).replace("\\", "/")
     except ValueError:
@@ -5252,8 +5252,8 @@ def snapshot_staging(
     rel_clean = (active_state_rel or "").lstrip("/")
     if rel_clean and not rel_clean.startswith("odin-states/"):
         rel_clean = f"odin-states/{os.path.basename(rel_clean)}"
-    staging_url = f"http://127.0.0.1:{staging_port}/"
-    staging_state_url = f"http://127.0.0.1:{staging_port}/{rel_clean}" if rel_clean else staging_url
+    staging_url = f"{base_url(CONFIG, staging_port)}/"
+    staging_state_url = f"{staging_url}{rel_clean}" if rel_clean else staging_url
 
     debug_prompt = (
         f"/odin We are debugging/enhancing Odin in the isolated Staging Environment (:8789).\n"

@@ -6,8 +6,10 @@ Config files are JSON and are deep-merged in this order (later wins):
   2. ~/.config/odin/config.json   (or $XDG_CONFIG_HOME/odin/config.json)
   3. <workspace>/.odin/config.json
   4. $ODIN_CONFIG
-Environment overrides: ODIN_ROOT, ODIN_PORT, ODIN_STAGING_PORT,
+Environment overrides: ODIN_ROOT, ODIN_PORT, ODIN_STAGING_PORT, ODIN_HOST,
 ODIN_PRIMARY_REPO_DIR, ODIN_STAGING_DIR.
+
+`python3 odin_config.py --url` prints the live server's base URL (https when TLS is configured).
 
 See odin.config.example.json at the repository root for every key.
 """
@@ -25,6 +27,11 @@ DEFAULTS = {
     # Directory scanned (up to 3 levels deep) for odin-states/ folders.
     "root": None,
     "ports": {"live": 8788, "staging": 8789},
+    # host: interface to bind ("0.0.0.0" exposes the server on your network).
+    # cert/key: PEM files; when both are set the server speaks HTTPS.
+    # allowed_hosts: extra Host header names to accept besides IPs, localhost,
+    # *.local and this machine's hostname (DNS-rebinding guard).
+    "server": {"host": "127.0.0.1", "cert": None, "key": None, "allowed_hosts": []},
     # name -> {path, base_branch, port_range: [lo, hi], role: frontend|backend,
     #          start: "PORT={port} npm start", copy_paths: ["node_modules"]}
     "repos": {},
@@ -96,6 +103,12 @@ def load_config(workspace=None) -> dict:
     ports["live"] = int(os.environ.get("ODIN_PORT") or ports.get("live") or 8788)
     ports["staging"] = int(os.environ.get("ODIN_STAGING_PORT") or ports.get("staging") or 8789)
 
+    server = cfg["server"]
+    server["host"] = os.environ.get("ODIN_HOST") or server.get("host") or "127.0.0.1"
+    for key in ("cert", "key"):
+        if server.get(key):
+            server[key] = os.path.abspath(os.path.expanduser(server[key]))
+
     for repo in cfg["repos"].values():
         if repo.get("path"):
             repo["path"] = os.path.abspath(os.path.expanduser(repo["path"]))
@@ -131,5 +144,20 @@ def render_ports(text: str, cfg: dict) -> str:
     )
 
 
+def tls_enabled(cfg: dict) -> bool:
+    return bool(cfg["server"].get("cert") and cfg["server"].get("key"))
+
+
+def base_url(cfg: dict, port: int | None = None) -> str:
+    """Local base URL of an Odin server, e.g. http://127.0.0.1:8788."""
+    scheme = "https" if tls_enabled(cfg) else "http"
+    return f"{scheme}://127.0.0.1:{port or cfg['ports']['live']}"
+
+
 if __name__ == "__main__":
-    print(json.dumps(load_config(), indent=2))
+    import sys
+
+    if "--url" in sys.argv:
+        print(base_url(load_config()))
+    else:
+        print(json.dumps(load_config(), indent=2))

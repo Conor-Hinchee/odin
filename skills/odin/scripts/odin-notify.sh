@@ -16,14 +16,15 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
 if [ -n "$STATE_FILE" ] && [ -f "$STATE_FILE" ]; then
   STATE_FILE=$(cd "$(dirname "$STATE_FILE")" && pwd)/$(basename "$STATE_FILE")
-  PORT="${ODIN_PORT:-$(python3 -c "import sys; sys.path.insert(0, sys.argv[1]); from odin_config import load_config; print(load_config()['ports']['live'])" "$SCRIPT_DIR" 2>/dev/null)}"
+  BASE_URL=$(python3 "$SCRIPT_DIR/odin_config.py" --url 2>/dev/null)
   FILE_Q=$(python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=''))" "$STATE_FILE")
-  if [ -n "$PORT" ]; then
-    COVERED=$(curl -s --max-time 1 "http://127.0.0.1:${PORT}/api/presence?file=${FILE_Q}" 2>/dev/null)
+  if [ -n "$BASE_URL" ]; then
+    # -k: loopback call to our own server; system curl may not trust a locally generated CA.
+    COVERED=$(curl -sk --max-time 1 "${BASE_URL}/api/presence?file=${FILE_Q}" 2>/dev/null)
     case "$COVERED" in
       *'"covered": true'*) exit 0 ;;
     esac
-    OPEN_URL="http://127.0.0.1:${PORT}/go?file=${FILE_Q}"
+    OPEN_URL="${BASE_URL}/go?file=${FILE_Q}"
   fi
 fi
 

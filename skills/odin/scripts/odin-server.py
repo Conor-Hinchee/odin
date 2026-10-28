@@ -16,12 +16,15 @@ import datetime
 import glob
 import html as html_lib
 import http.server
+import ipaddress
 import json
 import os
 import re
 import shutil
 import signal
+import socket
 import socketserver
+import ssl
 import subprocess
 import sys
 import threading
@@ -29,7 +32,7 @@ import time
 import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from odin_config import load_config, render_ports  # noqa: E402
+from odin_config import load_config, render_ports, tls_enabled  # noqa: E402
 import odin_transcript  # noqa: E402
 
 CONFIG = load_config()
@@ -40,8 +43,20 @@ SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DASHBOARD_HTML_PATH = os.path.join(SKILL_DIR, "resources", "dashboard.html")
 
 
-def configure_server(port: int | None = None, root_dir: str | None = None) -> tuple[int, str]:
+def configure_server(
+    port: int | None = None,
+    root_dir: str | None = None,
+    host: str | None = None,
+    cert: str | None = None,
+    key: str | None = None,
+) -> tuple[int, str]:
     global PORT, ROOT_DIR
+    if host:
+        CONFIG["server"]["host"] = host
+    if cert:
+        CONFIG["server"]["cert"] = os.path.abspath(os.path.expanduser(cert))
+    if key:
+        CONFIG["server"]["key"] = os.path.abspath(os.path.expanduser(key))
     if port is not None:
         PORT = int(port)
         os.environ["ODIN_PORT"] = str(PORT)
@@ -57,6 +72,9 @@ def parse_server_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Odin Allfather State & Command Server", add_help=False)
     parser.add_argument("--port", "-p", type=int, default=None, help="TCP port to listen on (default: ODIN_PORT or 8788)")
     parser.add_argument("--dir", "--root", "-d", dest="root_dir", default=None, help="Root workspace directory to serve")
+    parser.add_argument("--host", default=None, help="Interface to bind (default: config server.host or 127.0.0.1; 0.0.0.0 for your network)")
+    parser.add_argument("--cert", default=None, help="TLS certificate (PEM); with --key, serve HTTPS")
+    parser.add_argument("--key", default=None, help="TLS private key (PEM)")
     args, _ = parser.parse_known_args(argv)
     return args
 
@@ -1290,12 +1308,74 @@ def prune_secondary_worktree(worktree_path: str) -> dict:
     return {"pruned": True, "worktree": short, "message": f"Pruned clean worktree {short}."}
 
 
+def _host_name(host_header: str) -> str:
+    """Hostname part of a Host header ("[::1]:8788" -> "::1", "pi.local:8788" -> "pi.local")."""
+    host = (host_header or "").strip().lower()
+    if host.startswith("["):
+        return host[1:].split("]", 1)[0]
+    return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+
+
+def host_allowed(host_header: str) -> bool:
+    """DNS-rebinding guard: accept IP literals, localhost, *.local, this machine and configured names."""
+    if not host_header:
+        return True
+    name = _host_name(host_header)
+    try:
+        ipaddress.ip_address(name)
+        return True
+    except ValueError:
+        pass
+    machine = socket.gethostname().lower()
+    allowed = {"localhost", machine, machine.split(".")[0]}
+    allowed.update(h.lower() for h in CONFIG["server"].get("allowed_hosts") or [])
+    return name in allowed or name.endswith(".local")
+
+
+def origin_allowed(origin: str | None, host_header: str) -> bool:
+    """CSRF guard for POSTs: a browser Origin must be this server; "null" (file://, sandboxed frames) is refused."""
+    if origin is None:
+        return True
+    return urllib.parse.urlparse(origin).netloc.lower() == (host_header or "").strip().lower()
+
+
+def localize_links(text: str, host_header: str) -> str:
+    """Point absolute 127.0.0.1 links to this server (live or staging port) at the host the viewer used."""
+    name = _host_name(host_header)
+    if not name:
+        return text
+    host = f"[{name}]" if ":" in name else name
+    scheme = "https" if tls_enabled(CONFIG) else "http"
+    return re.sub(
+        rf"https?://127\.0\.0\.1:({PORT}|{STAGING_PORT})\b",
+        lambda m: f"{scheme}://{host}:{m.group(1)}",
+        text,
+    )
+
+
 class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=ROOT_DIR, **kwargs)
 
+    def setup(self):
+        # TLS handshakes run here, in the request thread, so a slow client can't stall accept().
+        ctx = getattr(self.server, "ssl_context", None)
+        if ctx is not None:
+            self.request.settimeout(15)
+            self.request = ctx.wrap_socket(self.request, server_side=True)
+            self.request.settimeout(None)
+        super().setup()
+
+    def _reject_foreign(self, check_origin: bool = False) -> bool:
+        """Send 403 and return True when the Host (or, for POSTs, the Origin) isn't this server."""
+        host = self.headers.get("Host", "")
+        if host_allowed(host) and (not check_origin or origin_allowed(self.headers.get("Origin"), host)):
+            return False
+        self.send_json({"ok": False, "error": "Forbidden host or origin"}, status=403)
+        return True
+
     def send_json(self, payload: dict, status: int = 200):
-        raw = json.dumps(payload).encode("utf-8")
+        raw = localize_links(json.dumps(payload), self.headers.get("Host", "")).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
@@ -1303,6 +1383,8 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(raw)
 
     def do_OPTIONS(self):
+        if self._reject_foreign():
+            return
         self.send_response(204)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
@@ -1312,6 +1394,9 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         clean_path = urllib.parse.unquote(parsed.path)
         query = urllib.parse.parse_qs(parsed.query)
+
+        if self._reject_foreign():
+            return
 
         if clean_path == "/go":
             self.send_response(302)
@@ -1392,7 +1477,7 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             target_dashboard = DASHBOARD_HTML_PATH if os.path.isfile(DASHBOARD_HTML_PATH) else workspace_index
             if os.path.isfile(target_dashboard):
                 with open(target_dashboard, "r", encoding="utf-8") as f:
-                    data = render_ports(f.read(), CONFIG).encode("utf-8")
+                    data = localize_links(render_ports(f.read(), CONFIG), self.headers.get("Host", "")).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(data)))
@@ -1435,7 +1520,7 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                         html_text,
                         flags=re.IGNORECASE,
                     )
-                    raw_html = html_text.encode("utf-8")
+                    raw_html = localize_links(html_text, self.headers.get("Host", "")).encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.send_header("Content-Length", str(len(raw_html)))
@@ -1449,6 +1534,8 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
+        if self._reject_foreign(check_origin=True):
+            return
         if parsed.path == "/api/presence":
             try:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -2105,7 +2192,6 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
-        self.send_header("Access-Control-Allow-Origin", "*")
         super().end_headers()
 
     def log_message(self, format, *args):
@@ -2115,11 +2201,28 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 class ReusableTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
     daemon_threads = True
+    ssl_context = None
+
+    def handle_error(self, request, client_address):
+        # Failed TLS handshakes (plain HTTP to an HTTPS port, untrusted certs) are routine noise.
+        if isinstance(sys.exc_info()[1], (ssl.SSLError, ConnectionError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
+
+def lan_addresses() -> list[str]:
+    """Best-effort IPv4 address of this machine on the local network."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))  # TEST-NET; no packet is sent for UDP connect
+            return [s.getsockname()[0]]
+    except OSError:
+        return []
 
 
 def main(argv: list[str] | None = None):
     args = parse_server_args(argv)
-    configure_server(port=args.port, root_dir=args.root_dir)
+    configure_server(port=args.port, root_dir=args.root_dir, host=args.host, cert=args.cert, key=args.key)
     listeners = get_listening_ports()
     existing = listeners.get(PORT)
     if (
@@ -2135,8 +2238,20 @@ def main(argv: list[str] | None = None):
     if _telemetry_config():
         threading.Thread(target=refresh_telemetry, kwargs={"force": True}, daemon=True).start()
     try:
-        with ReusableTCPServer(("127.0.0.1", PORT), OdinHTTPRequestHandler) as httpd:
-            print(f"Odin State Server listening on http://127.0.0.1:{PORT} (root: {ROOT_DIR})", flush=True)
+        host = CONFIG["server"]["host"]
+        with ReusableTCPServer((host, PORT), OdinHTTPRequestHandler) as httpd:
+            scheme = "http"
+            if tls_enabled(CONFIG):
+                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                ctx.load_cert_chain(CONFIG["server"]["cert"], CONFIG["server"]["key"])
+                httpd.ssl_context = ctx
+                scheme = "https"
+            print(f"Odin State Server listening on {scheme}://127.0.0.1:{PORT} (root: {ROOT_DIR})", flush=True)
+            if host not in ("127.0.0.1", "localhost", "::1"):
+                for ip in lan_addresses():
+                    print(f"  On your network: {scheme}://{ip}:{PORT}/  (no authentication: anyone on this network has full access)", flush=True)
+                if scheme == "http":
+                    print("  Warning: without TLS (server.cert/key), other devices can't use browser notifications.", flush=True)
             httpd.serve_forever()
     except OSError as exc:
         print(f"Odin State Server port {PORT} already in use ({exc})", file=sys.stderr)

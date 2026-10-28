@@ -1,6 +1,12 @@
 {
   "root": "~/code",
   "ports": { "live": 8788, "staging": 8789 },
+  "server": {
+    "host": "0.0.0.0",
+    "cert": "~/.config/odin/certs/odin.pem",
+    "key": "~/.config/odin/certs/odin-key.pem",
+    "allowed_hosts": []
+  },
   "repos": {
     "web": {
       "path": "~/code/web",

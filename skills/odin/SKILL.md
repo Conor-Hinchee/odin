@@ -34,10 +34,10 @@ Optional settings (repos, ports, telemetry, skill pills, PR telemetry, staging) 
    ```bash
    lsof -nP -iTCP:8788 -sTCP:LISTEN || nohup python3 "$ODIN/odin-server.py" --dir "<odin root>" >/tmp/odin-server.log 2>&1 &
    ```
-   `<odin root>` is the configured `root`, or a parent folder of your repos (the server scans three levels deep for `odin-states/`). If the user asked to boot Odin, also open `http://127.0.0.1:8788/` (`open` on macOS, `xdg-open` on Linux).
+   `<odin root>` is the configured `root`, or a parent folder of your repos (the server scans three levels deep for `odin-states/`). `<base url>` below is the output of `python3 "$ODIN/odin_config.py" --url`: `http://127.0.0.1:8788` by default, `https://…` when the user configured TLS. If the user asked to boot Odin, also open `<base url>/` (`open` on macOS, `xdg-open` on Linux).
 4. **Show the links** at the top of every phase update:
-   - `[🌐 Open <task-slug>](http://127.0.0.1:8788/<path-from-root>/odin-states/<task-slug>.html)`
-   - `[🏛️ Odin Dashboard](http://127.0.0.1:8788/)`
+   - `[🌐 Open <task-slug>](<base url>/<path-from-root>/odin-states/<task-slug>.html)`
+   - `[🏛️ Odin Dashboard](<base url>/)`
    - the state file path
 5. **Update in real time.** Mark a phase `active` when it starts, and `done`, `reject` or `awaiting_human` the moment it ends, using `odin-state.py update-phase`. Never batch status updates at the end of a turn. Never overwrite earlier iteration cards: `update-phase` only touches the current `data-iteration="N"` card.
 6. **Notify on every phase change**, including every pause for questions:
