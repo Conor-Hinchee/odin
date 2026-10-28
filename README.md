@@ -21,7 +21,15 @@ claude plugin install odin@odin
 
 Then, in a session, run `/odin:odin <your task>`, or ask Claude to "boot up Odin" to start the dashboard at <http://127.0.0.1:8788/>.
 
-Requirements: Python 3.10+, git, and `lsof`. macOS and Linux are supported. Desktop notifications use `osascript` on macOS and `notify-send` on Linux.
+Requirements: Python 3.10+, git, and `lsof`. macOS and Linux are supported.
+
+### Notifications
+
+Odin alerts you on every phase change in up to three places:
+
+- **Browser.** Open the dashboard or a state page in Chrome (or any regular browser) and click **🔔 Enable Alerts**. Phase changes then show as browser notifications, and clicking one focuses the tab. Browsers embedded in other apps, such as the Claude Code browser pane, usually block notifications; there you get the in-page toast and chime instead.
+- **Desktop banner.** On macOS, install [terminal-notifier](https://github.com/julienXX/terminal-notifier) (`brew install terminal-notifier`) so that clicking a banner opens the task's state page. Without it, Odin falls back to `osascript`, whose banners are credited to Script Editor and open it when clicked. On Linux, banners use `notify-send`.
+- **No duplicates.** While an Odin page with browser notifications allowed is open, it covers its own task (the dashboard covers every task), and the desktop banner is skipped.
 
 ## Configure (optional)
 

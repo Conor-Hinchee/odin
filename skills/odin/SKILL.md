@@ -14,7 +14,7 @@ Scripts live in `${CLAUDE_SKILL_DIR}/scripts/`. In the commands below, `ODIN=${C
 | `odin-server.py` | Dashboard + state server (`--dir <root> --port 8788`) |
 | `odin-state.py` | Phase updates, iterations, diffs, wakeups, deltas, staging. See [references/cli.md](references/cli.md) |
 | `odin-isolate.py` | Worktree + port allocation for configured repos. See [references/isolation.md](references/isolation.md) |
-| `odin-notify.sh` | Desktop notification + chime |
+| `odin-notify.sh` | Desktop notification + chime (click opens the task page via terminal-notifier on macOS) |
 
 Optional settings (repos, ports, telemetry, skill pills, PR telemetry, staging) come from `~/.config/odin/config.json` or `<workspace>/.odin/config.json`. Run `python3 "$ODIN/odin_config.py"` to print the effective config. Everything works with no config.
 
@@ -42,9 +42,9 @@ Optional settings (repos, ports, telemetry, skill pills, PR telemetry, staging) 
 5. **Update in real time.** Mark a phase `active` when it starts, and `done`, `reject` or `awaiting_human` the moment it ends, using `odin-state.py update-phase`. Never batch status updates at the end of a turn. Never overwrite earlier iteration cards: `update-phase` only touches the current `data-iteration="N"` card.
 6. **Notify on every phase change**, including every pause for questions:
    ```bash
-   sh "$ODIN/odin-notify.sh" "<Phase name>" "<one-line status>" "<phase|awaiting_human|done|reject>"
+   sh "$ODIN/odin-notify.sh" "<Phase name>" "<one-line status>" "<phase|awaiting_human|done|reject>" "odin-states/<task-slug>.html"
    ```
-   Use `phase` for phase 1 and 2 transitions, `awaiting_human` when pausing for input, `done` when phase 3 or 4 completes, and `reject` when Heimdall rejects.
+   Use `phase` for phase 1 and 2 transitions, `awaiting_human` when pausing for input, `done` when phase 3 or 4 completes, and `reject` when Heimdall rejects. Always pass the state file: clicking the banner then opens the task's page, and the banner is skipped when an open Odin page with browser notifications allowed already shows the alert.
 7. **Pausing for the human.** When you stop to ask questions or wait for approval:
    - set the blocked section to `data-status="awaiting_human"`, and list the exact questions in `<div class="open-questions-box"><ol><li>…</li></ol></div>` inside it;
    - ask them in chat with AskUserQuestion as well, so the user can answer in either place;

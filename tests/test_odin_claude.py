@@ -202,6 +202,26 @@ class TestServerGeneric(unittest.TestCase):
     def setUpClass(cls):
         cls.server = load_module("odin_server_generic_test", "odin-server.py")
 
+    def test_go_url_and_presence_coverage(self):
+        root = self.server.ROOT_DIR
+        state = os.path.join(root, "repo", "odin-states", "my task.html")
+        other = os.path.join(root, "repo", "odin-states", "other.html")
+        self.assertEqual(self.server.state_file_url_path(state), "/repo/odin-states/my%20task.html")
+        self.assertEqual(self.server.state_file_url_path("/elsewhere/x.html"), "/")
+
+        self.server._PRESENCE.clear()
+        self.assertFalse(self.server.presence_covers(state, now=100.0))
+        # A state page pings with its (browser-encoded) pathname and covers only its own task.
+        self.server.record_presence("/repo/odin-states/my%20task.html", now=100.0)
+        self.assertTrue(self.server.presence_covers(state, now=110.0))
+        self.assertFalse(self.server.presence_covers(other, now=110.0))
+        self.assertFalse(self.server.presence_covers(state, now=100.0 + self.server.PRESENCE_TTL + 1))
+        # The dashboard covers every task; files outside the root never match a page scope.
+        self.server.record_presence("*", now=200.0)
+        self.assertTrue(self.server.presence_covers(other, now=205.0))
+        self.assertTrue(self.server.presence_covers("/elsewhere/x.html", now=205.0))
+        self.server._PRESENCE.clear()
+
     def test_body_env_reads_and_writes_backend_port(self):
         env = self.server.extract_body_env('<body data-app-port="8081" data-backend-port="3005">', "/x/odin-states/a.html", "(root)")
         self.assertEqual(env["appPort"], 8081)

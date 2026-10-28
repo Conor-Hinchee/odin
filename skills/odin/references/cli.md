@@ -22,6 +22,8 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/odin-server.py" --dir <root> [--port 8788]
 
 - `GET /`: dashboard of every `odin-states/*.html` up to three levels below `<root>` (archived files in `odin-states/archive/` included).
 - `GET /api/projects`, `/api/session-telemetry?id=…`, `/api/telemetry`, `/api/mimir/audit`, `/api/skills`.
+- `GET /go?file=<absolute state file path>`: redirects to that state file's page (or `/` when the file is outside `<root>`). Desktop banners link here.
+- `POST /api/presence {"scope": "*" | "<page path>"}`: open pages with browser notifications allowed ping this every 5s. `GET /api/presence?file=<path>` returns `covered: true` when the dashboard or that file's page pinged in the last 15s, and `odin-notify.sh` then skips its banner.
 - `POST /api/projects/action`: archive, restore, update phases, wake the agent, allocate environments, stop dev ports, prune worktrees, staging.
 
 ## Files Odin writes next to state files

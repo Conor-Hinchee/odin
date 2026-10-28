@@ -1176,6 +1176,41 @@ def resolve_safe_project_path(rel_id: str) -> str:
     return target
 
 
+# Browser tabs that can show OS notifications ping /api/presence on every poll.
+# Scope "*" is the dashboard (covers every task); otherwise the state page's URL path.
+PRESENCE_TTL = 15.0
+_PRESENCE: dict[str, float] = {}
+_PRESENCE_LOCK = threading.Lock()
+
+
+def state_file_url_path(file_path: str) -> str:
+    """URL path the server serves a state file at, or "/" when it lies outside ROOT_DIR."""
+    target = os.path.abspath(file_path or "")
+    if not target.startswith(ROOT_DIR + os.sep):
+        return "/"
+    return "/" + urllib.parse.quote(os.path.relpath(target, ROOT_DIR).replace(os.sep, "/"))
+
+
+def record_presence(scope: str, now: float | None = None) -> None:
+    scope = (scope or "").strip()
+    if not scope:
+        return
+    if scope != "*":
+        scope = urllib.parse.quote(urllib.parse.unquote(scope))
+    with _PRESENCE_LOCK:
+        _PRESENCE[scope] = time.time() if now is None else now
+
+
+def presence_covers(file_path: str, now: float | None = None) -> bool:
+    """True when a notification-enabled dashboard, or this file's page, pinged recently."""
+    now = time.time() if now is None else now
+    scopes = ["*"]
+    if file_path:
+        scopes.append(state_file_url_path(file_path))
+    with _PRESENCE_LOCK:
+        return any(now - _PRESENCE.get(s, 0.0) <= PRESENCE_TTL for s in scopes if s != "/")
+
+
 def archive_or_restore_file(filepath: str, to_archive: bool) -> str:
     parent = os.path.dirname(filepath)
     filename = os.path.basename(filepath)
@@ -1277,6 +1312,15 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         clean_path = urllib.parse.unquote(parsed.path)
         query = urllib.parse.parse_qs(parsed.query)
+
+        if clean_path == "/go":
+            self.send_response(302)
+            self.send_header("Location", state_file_url_path(query.get("file", [""])[0]))
+            self.end_headers()
+            return
+
+        if clean_path == "/api/presence":
+            return self.send_json({"ok": True, "covered": presence_covers(query.get("file", [""])[0])})
 
         if clean_path == "/api/session-telemetry":
             rel_id = query.get("id", [""])[0]
@@ -1405,6 +1449,14 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/api/presence":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                body = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+            except Exception:
+                body = {}
+            record_presence(str(body.get("scope") or ""))
+            return self.send_json({"ok": True})
         if parsed.path not in ("/api/projects/action", "/api/mimir/apply"):
             return self.send_json({"ok": False, "error": "Unknown endpoint"}, status=404)
 

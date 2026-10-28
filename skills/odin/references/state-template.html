@@ -665,9 +665,21 @@
               icon: document.getElementById("odin-favicon")?.href,
               tag: "odin-" + SLUG + "-" + Date.now()
             });
-            n.onclick = () => window.focus();
+            n.onclick = () => { window.focus(); n.close(); };
           } catch {}
         }
+      }
+
+
+      // Tell the server this tab shows OS notifications, so odin-notify.sh skips its duplicate banner.
+      function pingPresence() {
+        if (!("Notification" in window) || Notification.permission !== "granted") return;
+        if (!location.protocol.startsWith("http")) return;
+        fetch("/api/presence", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ scope: location.pathname })
+        }).catch(() => {});
       }
 
       function updateFaviconAndTitle(overallStatus) {
@@ -850,7 +862,12 @@
         if ("Notification" in window && Notification.permission !== "granted") {
           try { await Notification.requestPermission(); } catch {}
         }
-        notifyUser("⚡ Gjallarhorn Ready", "Live audio chimes & browser notifications are active!", "done");
+        if ("Notification" in window && Notification.permission === "granted") {
+          notifyUser("⚡ Gjallarhorn Ready", "Live audio chimes & browser notifications are active!", "done");
+          pingPresence();
+        } else {
+          notifyUser("🔕 Desktop Alerts Unavailable", "OS notifications are blocked in this view. Chimes and toasts still work here; open this page in Chrome for desktop alerts.", "phase");
+        }
       });
 
       const applyTheme = (theme, persist = false) => {
@@ -883,6 +900,8 @@
 
       syncStepperAndDiff(false);
       setInterval(pollLatestState, 2500);
+      pingPresence();
+      setInterval(pingPresence, 5000);
     })();
   </script>
   <script type="application/json" id="odin-iteration-ledger">

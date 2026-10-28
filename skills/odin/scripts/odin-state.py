@@ -73,11 +73,11 @@ def now_human() -> str:
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def trigger_notify(title: str, subtitle: str, sound_mode: str = "phase") -> None:
+def trigger_notify(title: str, subtitle: str, sound_mode: str = "phase", state_file: str = "") -> None:
     if os.path.exists(NOTIFY_SCRIPT):
         try:
             subprocess.Popen(
-                ["bash", NOTIFY_SCRIPT, title, subtitle, sound_mode],
+                ["bash", NOTIFY_SCRIPT, title, subtitle, sound_mode, str(state_file)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -2972,6 +2972,7 @@ def cmd_step_back(args: argparse.Namespace) -> int:
         f"Phase 2: Thor — Iteration {next_iter}",
         f"Stepped back ({args.source}): {args.reason[:80]}",
         "phase",
+        html_path,
     )
     print(f"Stepped back {html_path.name} to Iteration {next_iter} (prior iterations 1..{prev_iter} preserved).")
     return 0
@@ -4099,6 +4100,7 @@ def cmd_update_phase(args: argparse.Namespace) -> int:
         f"{phase_title} (Iter {target_iter})",
         args.summary or f"Status transitioned to {args.status.upper()}",
         sound_mode,
+        html_path,
     )
     print(f"Updated {html_path.name} [{phase_key}] Iteration {target_iter} -> {args.status.upper()}.")
     return 0

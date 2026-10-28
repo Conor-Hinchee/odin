@@ -2,11 +2,30 @@
 # Desktop notification + chime for Odin phase transitions.
 # macOS: Notification Center banner + system sound. Linux: notify-send + paplay/aplay
 # when available. Anywhere else: terminal bell.
-# Usage: sh odin-notify.sh "<Phase/Title>" "<Message>" [done|phase|reject|questions|awaiting_human]
+# Usage: sh odin-notify.sh "<Phase/Title>" "<Message>" [done|phase|reject|questions|awaiting_human] [state-file]
+#
+# With a state file, macOS banners come from terminal-notifier (when installed) and clicking one
+# opens that task's page. The banner is skipped when an open Odin page with browser notifications
+# allowed already covers the task, so the alert arrives once.
 
 PHASE_TITLE="${1:-Odin Allfather}"
 MESSAGE="${2:-Phase update complete.}"
 STATUS="${3:-phase}"
+STATE_FILE="${4:-}"
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+
+if [ -n "$STATE_FILE" ] && [ -f "$STATE_FILE" ]; then
+  STATE_FILE=$(cd "$(dirname "$STATE_FILE")" && pwd)/$(basename "$STATE_FILE")
+  PORT="${ODIN_PORT:-$(python3 -c "import sys; sys.path.insert(0, sys.argv[1]); from odin_config import load_config; print(load_config()['ports']['live'])" "$SCRIPT_DIR" 2>/dev/null)}"
+  FILE_Q=$(python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=''))" "$STATE_FILE")
+  if [ -n "$PORT" ]; then
+    COVERED=$(curl -s --max-time 1 "http://127.0.0.1:${PORT}/api/presence?file=${FILE_Q}" 2>/dev/null)
+    case "$COVERED" in
+      *'"covered": true'*) exit 0 ;;
+    esac
+    OPEN_URL="http://127.0.0.1:${PORT}/go?file=${FILE_Q}"
+  fi
+fi
 
 case "$STATUS" in
   done|DONE)
@@ -23,6 +42,17 @@ TITLE="⚡ Odin — ${PHASE_TITLE}"
 
 case "$(uname -s)" in
   Darwin)
+    if command -v terminal-notifier >/dev/null 2>&1; then
+      # -sound plays the chime, so skip afplay. -group replaces this task's previous banner.
+      if [ -n "$OPEN_URL" ]; then
+        terminal-notifier -title "$TITLE" -message "$MESSAGE" -sound "$MAC_SOUND" \
+          -group "odin-$(basename "$STATE_FILE" .html)" -open "$OPEN_URL" >/dev/null 2>&1
+      else
+        terminal-notifier -title "$TITLE" -message "$MESSAGE" -sound "$MAC_SOUND" >/dev/null 2>&1
+      fi
+      exit 0
+    fi
+    # Fallback: osascript banners are attributed to Script Editor, and clicking one opens it.
     # Escape double quotes for AppleScript string literals
     esc_title=$(printf '%s' "$TITLE" | sed 's/"/\\"/g')
     esc_msg=$(printf '%s' "$MESSAGE" | sed 's/"/\\"/g')

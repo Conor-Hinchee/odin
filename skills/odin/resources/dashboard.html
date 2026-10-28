@@ -1586,9 +1586,21 @@
               icon: document.getElementById("odin-favicon")?.href,
               tag: "odin-dashboard-" + Date.now()
             });
-            n.onclick = () => window.focus();
+            n.onclick = () => { window.focus(); n.close(); };
           } catch {}
         }
+      }
+
+
+      // Tell the server this tab shows OS notifications, so odin-notify.sh skips its duplicate banner.
+      function pingPresence() {
+        if (!("Notification" in window) || Notification.permission !== "granted") return;
+        if (!location.protocol.startsWith("http")) return;
+        fetch("/api/presence", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ scope: "*" })
+        }).catch(() => {});
       }
 
       function relativeTime(mtimeSec) {
@@ -2704,7 +2716,12 @@
         if ("Notification" in window && Notification.permission !== "granted") {
           try { await Notification.requestPermission(); } catch {}
         }
-        notifyUser("⚡ Gjallarhorn Ready", "Dashboard audio chimes & desktop notifications enabled!", "done");
+        if ("Notification" in window && Notification.permission === "granted") {
+          notifyUser("⚡ Gjallarhorn Ready", "Dashboard audio chimes & desktop notifications enabled!", "done");
+          pingPresence();
+        } else {
+          notifyUser("🔕 Desktop Alerts Unavailable", "OS notifications are blocked in this view. Chimes and toasts still work here; open this page in Chrome for desktop alerts.", "phase");
+        }
       });
 
       const savedTheme = localStorage.getItem(THEME_KEY) || "dark";
@@ -2857,6 +2874,8 @@
       fetchProjects(true);
       fetchTelemetry(false);
       setInterval(() => fetchProjects(true), 3000);
+      pingPresence();
+      setInterval(pingPresence, 5000);
     })();
   </script>
 </body>
