@@ -1,6 +1,6 @@
 # Odin ⚡
 
-A Claude Code plugin that runs complex development tasks through a five-phase, Norse-themed agentic loop. Each task gets a live HTML state file, and a local dashboard lets you review, edit, approve or reject without leaving the browser.
+A Claude Code and Antigravity plugin that runs complex development tasks through a five-phase, Norse-themed agentic loop. Each task gets a live HTML state file, and a local dashboard lets you review, edit, approve or reject without leaving the browser.
 
 | Phase | Role |
 |---|---|
@@ -24,6 +24,8 @@ Odin has no version number: every commit on `main` is a new release. To get upda
 To work on Odin itself, add your checkout as the marketplace instead (`claude plugin marketplace add /path/to/odin`). Plugins from a local marketplace load in place, so your edits apply on the next session or `/reload-plugins`.
 
 Then, in a session, run `/odin:odin <your task>`, or ask Claude to "boot up Odin" to start the dashboard at <http://127.0.0.1:8788/>.
+
+**Antigravity:** clone or symlink this repository into `~/.gemini/config/plugins/odin` (or `<workspace>/.agents/plugins/odin`). Antigravity loads root `plugin.json`, `hooks.json`, and `skills/odin/SKILL.md` automatically.
 
 Requirements: Python 3.10+, git, and `lsof`. macOS and Linux are supported.
 

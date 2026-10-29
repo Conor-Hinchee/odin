@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Claude Code hook: record Odin progress as it happens.
+"""Claude Code & Antigravity hook: record Odin progress as it happens.
 
-Registered for PostToolUse (Bash, Agent), PostToolUseFailure (Bash) and
-SubagentStop. When this session has an active Odin task (a state file whose
+Registered for PostToolUse (Bash / Agent in Claude Code; run_command /
+invoke_subagent in Antigravity), PostToolUseFailure (Bash) and SubagentStop.
+When this session has an active Odin task (a state file whose
 <body data-session-id> matches and with a phase marked active or
 awaiting_human), it appends to that task's progress timeline:
 
@@ -11,8 +12,9 @@ awaiting_human), it appends to that task's progress timeline:
   in the Odin config) with pass/fail;
 - each subagent (Valkyrie) dispatch and return.
 
-The hook never blocks or prints, and exits 0 on any error. Set
-`"progress": {"capture": false}` in the Odin config to turn it off.
+The hook never blocks, outputs `{}` when called by Antigravity PostToolUse,
+and exits 0 on any error. Set `"progress": {"capture": false}` in the Odin
+config to turn it off.
 """
 
 from __future__ import annotations
@@ -31,10 +33,14 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 from odin_config import load_config  # noqa: E402
 
 COMMIT_RE = re.compile(r"(?:^|[;&|(]|\s)git\s+(?:-C\s+(\S+)\s+)?commit\b")
-LEADING_CD_RE = re.compile(r"^\s*cd\s+\S+\s*&&\s*")
+LEADING_CD_RE = re.compile(r"^\s*cd\s+(\S+)\s*&&\s*")
 # Quote-aware, so a ">" inside an attribute value (e.g. an unfilled "<app-port>") doesn't end the tag.
 BODY_TAG_RE = re.compile(r"""<body\b(?:[^>"']|"[^"]*"|'[^']*')*>""", re.IGNORECASE)
 ACTIVE_SECTION_RE = re.compile(r'<section\b[^>]*\bdata-status=["\'](?:active|awaiting_human)["\']', re.IGNORECASE)
+
+
+def is_antigravity_payload(payload: dict) -> bool:
+    return "toolCall" in payload or "conversationId" in payload
 
 
 def _odin_state():
@@ -96,31 +102,51 @@ def head_commit(*repo_dirs: str) -> tuple[str, str] | None:
     return None
 
 
+def _extract_tool_and_args(payload: dict) -> tuple[str, dict]:
+    if is_antigravity_payload(payload):
+        tc = payload.get("toolCall") if isinstance(payload.get("toolCall"), dict) else {}
+        name = str(tc.get("name") or "")
+        args = tc.get("args") if isinstance(tc.get("args"), dict) else {}
+        return name, args
+    name = str(payload.get("tool_name") or "")
+    args = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+    return name, args
+
+
+def _command_failed(payload: dict) -> bool:
+    return payload.get("hook_event_name") == "PostToolUseFailure" or bool(payload.get("error"))
+
+
 def classify(payload: dict, check_patterns: list[str]) -> str:
     """What this hook call is about, decided before touching any state file."""
     event = payload.get("hook_event_name", "")
-    tool = payload.get("tool_name", "")
+    tool, tool_args = _extract_tool_and_args(payload)
     if event == "SubagentStop":
         return "subagent_return"
-    if tool == "Agent" and event == "PostToolUse":
+    if (tool == "Agent" and event == "PostToolUse") or tool == "invoke_subagent":
         return "subagent_dispatch"
-    if tool != "Bash":
+    if tool not in ("Bash", "run_command"):
         return ""
-    command = str((payload.get("tool_input") or {}).get("command") or "")
+    command = str(tool_args.get("command") or tool_args.get("CommandLine") or "")
     if "odin-state.py" in command:
         return ""
     if COMMIT_RE.search(command):
-        return "commit" if event == "PostToolUse" else ""
+        return "commit" if not _command_failed(payload) else ""
     if any(re.search(p, command) for p in check_patterns):
         return "check"
     return ""
 
 
 def handle(payload: dict) -> None:
-    session_id = str(payload.get("session_id") or "").strip()
+    session_id = str(payload.get("session_id") or payload.get("conversationId") or "").strip()
     if not session_id:
         return
-    cwd = payload.get("cwd") or os.getcwd()
+    ws_paths = payload.get("workspacePaths")
+    cwd = (
+        payload.get("cwd")
+        or (ws_paths[0] if isinstance(ws_paths, list) and ws_paths else None)
+        or os.getcwd()
+    )
     cfg = load_config(cwd)
     progress = cfg.get("progress") or {}
     if not progress.get("capture", True):
@@ -132,16 +158,18 @@ def handle(payload: dict) -> None:
     if not html_path:
         return
     odin_state = _odin_state()
-    tool_input = payload.get("tool_input") or {}
+    _, tool_input = _extract_tool_and_args(payload)
     response = payload.get("tool_response")
     response = response if isinstance(response, dict) else {}
 
     if intent == "commit":
-        command = str(tool_input.get("command") or "")
+        command = str(tool_input.get("command") or tool_input.get("CommandLine") or "")
         m = COMMIT_RE.search(command)
         explicit = os.path.join(cwd, m.group(1)) if m and m.group(1) else ""
+        cd_match = LEADING_CD_RE.search(command)
+        cd_dir = os.path.join(cwd, cd_match.group(1).strip("\"'")) if cd_match else ""
         worktree = odin_state._resolve_worktree_from_html(html_path.read_text(encoding="utf-8"), None)
-        head = head_commit(explicit, cwd, worktree)
+        head = head_commit(explicit, cd_dir, cwd, worktree)
         if not head:
             return
         sha, subject = head
@@ -150,8 +178,8 @@ def handle(payload: dict) -> None:
         odin_state.log_progress(html_path, "commit", f"{sha} {subject}", extra={"sha": sha})
 
     elif intent == "check":
-        command = str(tool_input.get("command") or "")
-        if payload.get("hook_event_name") == "PostToolUseFailure":
+        command = str(tool_input.get("command") or tool_input.get("CommandLine") or "")
+        if _command_failed(payload):
             error = str(payload.get("error") or "")
             odin_state.log_progress(
                 html_path, "test", f"❌ {short_command(command)}", detail=error[:1500], outcome="fail"
@@ -161,8 +189,8 @@ def handle(payload: dict) -> None:
             odin_state.log_progress(html_path, "test", f"✅ {short_command(command)}", detail=detail, outcome="pass")
 
     elif intent == "subagent_dispatch":
-        description = str(tool_input.get("description") or "subagent")
-        agent_type = str(tool_input.get("subagent_type") or "agent")
+        description = str(tool_input.get("description") or tool_input.get("Role") or "subagent")
+        agent_type = str(tool_input.get("subagent_type") or tool_input.get("TypeName") or "agent")
         agent_id = str(response.get("agentId") or "")
         if response.get("status") == "completed":
             content = response.get("content")
@@ -201,12 +229,16 @@ def handle(payload: dict) -> None:
 
 
 def main() -> int:
+    is_agy = False
     try:
         payload = json.loads(sys.stdin.read() or "{}")
         if isinstance(payload, dict):
+            is_agy = is_antigravity_payload(payload)
             handle(payload)
     except Exception:
         pass
+    if is_agy:
+        print("{}")
     return 0
 
 

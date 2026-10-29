@@ -7,7 +7,7 @@ description: The Odin Allfather agentic loop. Runs complex development and refac
 
 Odin runs a task through five phases and records every phase in a live HTML **state file**, `<workspace>/odin-states/<task-slug>.html`. A small local server (`127.0.0.1:8788`) serves those files and a dashboard of every Odin project, and lets the human approve, revise or reject from the browser.
 
-Scripts live in `${CLAUDE_SKILL_DIR}/scripts/`. In the commands below, `ODIN=${CLAUDE_SKILL_DIR}/scripts`.
+Scripts live in `${CLAUDE_SKILL_DIR}/scripts/` (or `<skill-dir>/scripts/` next to this `SKILL.md` in Antigravity). In the commands below, `ODIN="${CLAUDE_SKILL_DIR:-<skill-dir>}/scripts"`.
 
 | Script | Use |
 |---|---|
@@ -67,7 +67,7 @@ Optional settings (repos, ports, telemetry, skill pills, PR telemetry, staging) 
    - If the user turned the hook off (`"progress": {"capture": false}`), log commits and Valkyrie dispatch and return yourself.
 7. **Pausing for the human.** When you stop to ask questions or wait for approval:
    - set the blocked section to `data-status="awaiting_human"`, and list the exact questions in `<div class="open-questions-box"><ol><li>…</li></ol></div>` inside it;
-   - ask them in chat with AskUserQuestion as well, so the user can answer in either place;
+   - ask them in chat with `AskUserQuestion` (or `ask_question` in Antigravity) as well, so the user can answer in either place;
    - arm the wakeup watcher (below) before ending your turn.
 8. **Closing the loop (first tool call).** When the user answers questions, approves, or rejects, your **first** tool call that turn moves the paused phase out of `awaiting_human` with `update-phase`. On a rejection or follow-up feedback after phase 4 or 5, the first call is `step-back` (see phase 5).
 9. **Check for other sessions before editing a repo.** Other Claude sessions may be working in the same checkout, including Odin's own repository, which `odin-isolate.py` doesn't cover. Before your first edit, and again before you stage, run `git status`:
@@ -78,7 +78,7 @@ Optional settings (repos, ports, telemetry, skill pills, PR telemetry, staging) 
 
 ### Reactive wakeup bridge (`wait-for-human`)
 
-Whenever you pause at `awaiting_human` (phase 1 plan review, the phase 3 pre-PR gate, or phase 5 sign-off), start the watcher with the Bash tool using `run_in_background: true`:
+Whenever you pause at `awaiting_human` (phase 1 plan review, the phase 3 pre-PR gate, or phase 5 sign-off), start the watcher in the background (`Bash` with `run_in_background: true` in Claude Code, or `run_command` with `WaitMsBeforeAsync: 500` in Antigravity):
 
 ```bash
 python3 "$ODIN/odin-state.py" wait-for-human \
@@ -87,7 +87,7 @@ python3 "$ODIN/odin-state.py" wait-for-human \
   --session-id "<session id>"
 ```
 
-The dashboard then shows **🟢 PARTNER TURN**. When the human clicks Save & Launch Phase 2, Ask Huginn to Revise, Approve Code Diff & Open PR, Request Code Changes, or Sign Off / Reject, the watcher prints a wakeup JSON (`decision`, `notes`, `selectedSkills`) and exits. Claude Code re-invokes you when a background command exits, so the session resumes without copy-pasting. If `selectedSkills` lists skills (for example `/code-review`), invoke them at the start of the resumed turn. If the user answers in chat instead, stop the watcher.
+The dashboard then shows **🟢 PARTNER TURN**. When the human clicks Save & Launch Phase 2, Ask Huginn to Revise, Approve Code Diff & Open PR, Request Code Changes, or Sign Off / Reject, the watcher prints a wakeup JSON (`decision`, `notes`, `selectedSkills`) and exits. Claude Code and Antigravity re-invoke you when a background command exits, so the session resumes without copy-pasting. If `selectedSkills` lists skills (for example `/code-review`), invoke them at the start of the resumed turn. If the user answers in chat instead, stop the watcher.
 
 ---
 
@@ -123,7 +123,7 @@ graph TD
 ### Phase 2: Thor and the Valkyries (execute)
 - Mark `#thor-execution` active. Make the changes and run the tests inside the assigned worktree.
 - **Single-domain work**: Thor (you) does it directly.
-- **Independent parallel work**: dispatch Valkyries as subagents with the Agent tool, sent in one message so they run concurrently. Each gets an explicit, non-overlapping file list. Every Valkyrie prompt includes:
+- **Independent parallel work**: dispatch Valkyries as subagents (`Agent` tool in Claude Code, or `invoke_subagent` in Antigravity), sent in one message so they run concurrently. Each gets an explicit, non-overlapping file list. Every Valkyrie prompt includes:
   > *GIT GUARDRAIL: You are working in `<worktree>` on branch `<branch>`. Edit ONLY these files: `<file-list>`. NEVER run `git commit`, `git checkout`, `git switch`, `git pull`, `git reset`, `git stash`, or `git clean`. Leave verified edits in the working tree for Thor to commit.*
 
   Valkyrie roles: **Brunhild** (core logic and integrations), **Gunnr** (tests and fixtures), **Kara** (refactors, renames, lint sweeps), **Sigrun** (schemas, contracts, tool registrations).

@@ -88,7 +88,12 @@ class TestTranscript(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.projects = Path(self.tmp.name) / "projects" / "-tmp-proj"
         self.projects.mkdir(parents=True)
-        self.env = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.tmp.name})
+        self.brain = Path(self.tmp.name) / "brain"
+        self.brain.mkdir(parents=True)
+        self.env = mock.patch.dict(
+            os.environ,
+            {"CLAUDE_CONFIG_DIR": self.tmp.name, "ANTIGRAVITY_BRAIN_DIR": str(self.brain)},
+        )
         self.env.start()
         odin_transcript._PATH_CACHE.clear()
 
@@ -138,6 +143,63 @@ class TestTranscript(unittest.TestCase):
         self.assertEqual(res["openQuestions"], ["Use Postgres or SQLite?", "Keep the old API?"])
         write_jsonl(path, [USER("plan it"), ASSISTANT([{"type": "text", "text": text}]), USER("Postgres, yes")])
         self.assertFalse(odin_transcript.analyze_questions(str(path))["awaitingHuman"])
+
+    def test_antigravity_transcript_prompts_model_and_questions(self):
+        sid = "22222222-3333-4444-5555-666666666666"
+        logs_dir = self.brain / sid / ".system_generated" / "logs"
+        logs_dir.mkdir(parents=True)
+        path = logs_dir / "transcript.jsonl"
+        write_jsonl(path, [
+            {
+                "type": "USER_INPUT",
+                "source": "USER_EXPLICIT",
+                "created_at": "2026-10-29T10:00:00Z",
+                "content": "<USER_SETTINGS_CHANGE>\nUser changed setting `Model Selection` from Auto to Claude Opus 4.6 (Thinking).\n</USER_SETTINGS_CHANGE>\n<USER_REQUEST>\nAlign Odin with both harnesses\n</USER_REQUEST>",
+            },
+            {
+                "type": "PLANNER_RESPONSE",
+                "created_at": "2026-10-29T10:00:05Z",
+                "content": "Asking questions",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "name": "ask_question",
+                        "args": {"questions": [{"question": "Dual harness support?"}]},
+                    }
+                ],
+            },
+        ])
+        self.assertEqual(odin_transcript.find_transcript(sid), str(path))
+        self.assertEqual(odin_transcript.user_prompts(str(path)), ["Align Odin with both harnesses"])
+        self.assertEqual(odin_transcript.last_model(str(path)), "Claude Opus 4.6 (Thinking)")
+        self.assertEqual(odin_transcript.last_activity(str(path))["lastToolName"], "ask_question")
+        q_state = odin_transcript.analyze_questions(str(path))
+        self.assertTrue(q_state["awaitingHuman"])
+        self.assertEqual(q_state["openQuestions"], ["Dual harness support?"])
+
+        # Follow-up user input resolves the question
+        write_jsonl(path, [
+            {
+                "type": "USER_INPUT",
+                "source": "USER_EXPLICIT",
+                "created_at": "2026-10-29T10:00:00Z",
+                "content": "<USER_REQUEST>\nAlign Odin with both harnesses\n</USER_REQUEST>",
+            },
+            {
+                "type": "PLANNER_RESPONSE",
+                "created_at": "2026-10-29T10:00:05Z",
+                "tool_calls": [{"id": "call_1", "name": "ask_question", "args": {"questions": [{"question": "Dual harness support?"}]}}],
+            },
+            {
+                "type": "USER_INPUT",
+                "source": "USER_EXPLICIT",
+                "created_at": "2026-10-29T10:01:00Z",
+                "content": "<USER_REQUEST>\nYes, support both\n</USER_REQUEST>",
+            },
+        ])
+        q_resolved = odin_transcript.analyze_questions(str(path))
+        self.assertFalse(q_resolved["awaitingHuman"])
+        self.assertTrue(q_resolved["questionsResolved"])
 
 
 class TestPrHook(unittest.TestCase):
@@ -195,6 +257,47 @@ class TestPrHook(unittest.TestCase):
         )
         self.assertEqual(res.returncode, 0)
         self.assertEqual(res.stdout.strip(), "")
+
+    def test_antigravity_pre_tool_use_and_session_start(self):
+        self.hook.configure({"label": "🤖 Gemini Generated 🦾", "heading": "## 🤖 Gemini Session Telemetry"})
+        agy_payload = {
+            "conversationId": "agy-conv-123",
+            "transcriptPath": str(self.transcript),
+            "modelName": "Claude Opus 4.6 (Thinking)",
+            "toolCall": {
+                "name": "run_command",
+                "args": {
+                    "CommandLine": 'gh pr create --title "Fix Step #2" --body "## Summary\n- x\n\n### Prompt Summary\n- fix it"'
+                },
+            },
+        }
+        out = self.hook.handle_pre_tool_use(agy_payload)
+        self.assertEqual(out["decision"], "allow")
+        new_cmd = out["overwrite"]["CommandLine"]
+        self.assertIn("--label '🤖 Gemini Generated 🦾'", new_cmd)
+        self.assertIn("Fix Step 2", new_cmd)
+        self.assertIn("agy-conv-123", new_cmd)
+        self.assertIn("## 🤖 Gemini Session Telemetry", new_cmd)
+
+        # SessionStart hook outputs JSON injectSteps for Antigravity and plain text for Claude Code
+        session_script = str(SCRIPTS / "odin-session-start.py")
+        res_agy = subprocess.run(
+            [sys.executable, session_script],
+            input=json.dumps({"conversationId": "agy-conv-123", "workspacePaths": ["/tmp"]}),
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(res_agy.returncode, 0)
+        self.assertEqual(
+            json.loads(res_agy.stdout),
+            {"injectSteps": [{"systemMessage": {"systemMessage": "Odin session id: agy-conv-123"}}]},
+        )
+        res_claude = subprocess.run(
+            [sys.executable, session_script],
+            input=json.dumps({"session_id": "claude-sess-456"}),
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(res_claude.returncode, 0)
+        self.assertEqual(res_claude.stdout.strip(), "Odin session id: claude-sess-456")
 
 
 class TestServerGeneric(unittest.TestCase):

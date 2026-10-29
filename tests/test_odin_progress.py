@@ -233,6 +233,45 @@ class TestProgressHook(ProgressBase):
         self.bash("npm test", tool_response={"stdout": "ok"})
         self.assertEqual(len(self.ledger_events()), before)
 
+    def test_antigravity_post_tool_use_payloads(self):
+        env = {**os.environ, "ODIN_ROOT": str(self.root)}
+        for payload in (
+            {
+                "conversationId": SESSION_ID,
+                "workspacePaths": [str(self.repo)],
+                "toolCall": {"name": "run_command", "args": {"CommandLine": "npm test"}},
+            },
+            {
+                "conversationId": SESSION_ID,
+                "workspacePaths": [str(self.repo)],
+                "error": "exit status 1",
+                "toolCall": {"name": "run_command", "args": {"CommandLine": "npm run lint"}},
+            },
+            {
+                "conversationId": SESSION_ID,
+                "workspacePaths": [str(self.repo)],
+                "toolCall": {
+                    "name": "invoke_subagent",
+                    "args": {"Role": "Brunhild: core logic", "TypeName": "self"},
+                },
+            },
+        ):
+            res = subprocess.run(
+                [sys.executable, str(HOOK_SCRIPT)],
+                input=json.dumps(payload),
+                text=True,
+                capture_output=True,
+                env=env,
+            )
+            self.assertEqual(res.returncode, 0)
+            self.assertEqual(res.stdout.strip(), "{}")
+
+        events = self.ledger_events()
+        tests = [(e.get("outcome"), e["text"]) for e in events if e["kind"] == "test"]
+        self.assertEqual(tests, [("pass", "✅ npm test"), ("fail", "❌ npm run lint")])
+        valkyries = [e["text"] for e in events if e["kind"] == "valkyrie"]
+        self.assertEqual(valkyries, ["Dispatched Brunhild: core logic (self)"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,11 @@
+{
+  "name": "odin",
+  "description": "Odin: a five-phase agentic workflow (plan, execute, verify, retrospect, human sign-off) with a live local dashboard, iteration history, diff review, worktree and port isolation, and a reactive human-in-the-loop bridge.",
+  "author": { "name": "Conor Hinchee", "url": "https://github.com/Conor-Hinchee" },
+  "homepage": "https://github.com/Conor-Hinchee/odin",
+  "repository": "https://github.com/Conor-Hinchee/odin",
+  "license": "MIT",
+  "keywords": ["workflow", "agentic", "dashboard", "planning", "code-review", "worktree"],
+  "skills": "./skills",
+  "hooks": "./hooks.json"
+}
