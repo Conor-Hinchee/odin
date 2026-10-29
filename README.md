@@ -19,6 +19,10 @@ claude plugin marketplace add Conor-Hinchee/odin
 claude plugin install odin@odin
 ```
 
+Odin has no version number: every commit on `main` is a new release. To get updates automatically, run `/plugin`, open **Marketplaces**, select **odin** and choose **Enable auto-update**. A running session keeps the version it loaded until you run `/reload-plugins`.
+
+To work on Odin itself, add your checkout as the marketplace instead (`claude plugin marketplace add /path/to/odin`). Plugins from a local marketplace load in place, so your edits apply on the next session or `/reload-plugins`.
+
 Then, in a session, run `/odin:odin <your task>`, or ask Claude to "boot up Odin" to start the dashboard at <http://127.0.0.1:8788/>.
 
 Requirements: Python 3.10+, git, and `lsof`. macOS and Linux are supported.
