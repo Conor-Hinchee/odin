@@ -158,6 +158,8 @@ graph TD
     --failure-pattern "<what went wrong or what gap was exposed>" \
     --proposed-diff "<concise diff or rule text>"
   ```
+  `--target-path` names the file in its source repo, never an installed copy such as the plugin cache under `~/.claude/plugins/cache/`, which is overwritten on update.
+
   Proposals stay in the state file's ledger and do not touch the feature branch. They are reviewed later through the dashboard's **🧠 Mímir Harness Audit** or `mimir-audit`, and **Approve & Spawn Delta Ticket** turns one into its own Odin task.
 - Mark done.
 
