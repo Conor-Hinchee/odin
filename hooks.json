@@ -19,7 +19,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "run_command|invoke_subagent",
+        "matcher": "run_command|invoke_subagent|manage_task",
         "hooks": [
           {
             "type": "command",

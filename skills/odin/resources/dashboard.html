@@ -1897,20 +1897,46 @@
 
           const cardDeltas = Array.isArray(p.harnessDeltas) ? p.harnessDeltas : [];
           const cardPendingDeltas = cardDeltas.filter(d => (d.status || "pending") === "pending").length;
+          const cardInProgressDeltas = cardDeltas.filter(d => String(d.status || "").toLowerCase() === "in_progress").length;
           const isDeltaOpen = deltaBannerOpenState.has(p.id)
             ? deltaBannerOpenState.get(p.id)
-            : cardPendingDeltas > 0;
+            : (cardPendingDeltas > 0 || cardInProgressDeltas > 0);
+          const cardDeltaSummaryStatus = cardPendingDeltas > 0
+            ? `${cardPendingDeltas} Pending Approval`
+            : cardInProgressDeltas > 0
+              ? `${cardInProgressDeltas} In Progress (Ticket Spawned)`
+              : `${cardDeltas.length} Applied`;
           const cardDeltaBannerHtml = cardDeltas.length > 0
             ? `<details class="card-delta-banner" data-project-id="${escapeHtml(p.id)}" data-has-pending="${cardPendingDeltas > 0}" ${isDeltaOpen ? "open" : ""}>
                 <summary>
-                  <span>🧠 Mímir Harness Delta (${cardPendingDeltas > 0 ? `${cardPendingDeltas} Pending Approval` : `${cardDeltas.length} Applied`})</span>
+                  <span>🧠 Mímir Harness Delta (${cardDeltaSummaryStatus})</span>
                   <span style="font-size:0.68rem;color:var(--muted);">▾ Inspect &amp; Approve</span>
                 </summary>
                 <div class="card-delta-list" data-project-id="${escapeHtml(p.id)}">
                   ${cardDeltas.map(d => {
                     const dst = String(d.status || "pending").toLowerCase();
-                    const stLabel = dst === "applied" ? "✅ APPLIED" : dst === "dismissed" ? "🚫 DISMISSED" : "⏳ PENDING";
-                    const stClass = dst === "applied" ? "badge-done" : dst === "dismissed" ? "badge-pending" : "badge-awaiting_human";
+                    const stLabel = dst === "applied"
+                      ? "✅ APPLIED"
+                      : dst === "in_progress"
+                        ? "⚡ IN PROGRESS (TICKET SPAWNED)"
+                        : dst === "dismissed"
+                          ? "🚫 DISMISSED"
+                          : "⏳ PENDING";
+                    const stClass = dst === "applied"
+                      ? "badge-done"
+                      : dst === "in_progress"
+                        ? "badge-active"
+                        : dst === "dismissed"
+                          ? "badge-pending"
+                          : "badge-awaiting_human";
+                    const spawnedTicketId = d.spawned_ticket_id || "";
+                    const spawnedTicketUrl = d.spawned_ticket_url || (spawnedTicketId ? `/${spawnedTicketId.replace(/^\/+/, "")}` : "");
+                    const spawnedLinkHtml = spawnedTicketUrl
+                      ? `<a href="${escapeHtml(spawnedTicketUrl)}" class="btn btn-cyan" style="padding:0.2rem 0.55rem;font-size:0.69rem;text-decoration:none;">🎫 Open Delta Ticket ↗</a>`
+                      : "";
+                    const spawnBtnLabel = (spawnedTicketUrl && dst === "in_progress")
+                      ? "📋 Copy Launch Prompt / Sync Ticket"
+                      : "⚡ Approve &amp; Spawn Delta Ticket";
                     return `
                       <div class="card-delta-item">
                         <div style="display:flex;justify-content:space-between;align-items:center;gap:0.35rem;flex-wrap:wrap;margin-bottom:0.25rem;">
@@ -1925,7 +1951,9 @@
                         </div>
                         ${d.proposed_diff ? `<pre class="card-delta-diff"><code>${escapeHtml(d.proposed_diff)}</code></pre>` : ""}
                         <div style="display:flex;gap:0.35rem;flex-wrap:wrap;margin-top:0.35rem;">
-                          ${dst !== "applied" ? `<button type="button" class="btn btn-emerald" style="padding:0.2rem 0.55rem;font-size:0.69rem;" data-action="mimir-card-status" data-id="${escapeHtml(p.id)}" data-delta-id="${escapeHtml(d.id)}" data-status="applied">✅ Approve Delta (Mark Applied)</button>` : ""}
+                          ${spawnedLinkHtml}
+                          ${dst !== "applied" ? `<button type="button" class="btn btn-emerald" style="padding:0.2rem 0.55rem;font-size:0.69rem;font-weight:700;" data-action="mimir-card-spawn" data-id="${escapeHtml(p.id)}" data-delta-id="${escapeHtml(d.id)}" data-file-path="${escapeHtml(p.filepath || p.id || "")}">${spawnBtnLabel}</button>` : ""}
+                          ${dst !== "applied" ? `<button type="button" class="btn" style="padding:0.2rem 0.55rem;font-size:0.69rem;" data-action="mimir-card-status" data-id="${escapeHtml(p.id)}" data-delta-id="${escapeHtml(d.id)}" data-status="applied" title="Mark this delta as already applied without spawning a standalone Odin Delta Ticket">☑️ Mark Already Applied</button>` : ""}
                           ${dst !== "dismissed" ? `<button type="button" class="btn" style="padding:0.2rem 0.55rem;font-size:0.69rem;" data-action="mimir-card-status" data-id="${escapeHtml(p.id)}" data-delta-id="${escapeHtml(d.id)}" data-status="dismissed">🚫 Dismiss</button>` : ""}
                           ${dst !== "pending" ? `<button type="button" class="btn btn-gold" style="padding:0.2rem 0.55rem;font-size:0.69rem;" data-action="mimir-card-status" data-id="${escapeHtml(p.id)}" data-delta-id="${escapeHtml(d.id)}" data-status="pending">↩️ Reopen</button>` : ""}
                         </div>
@@ -2323,6 +2351,45 @@
         }
       }
 
+      async function spawnMimirDeltaTicket(deltaId, sourceFile, btn = null) {
+        const origText = btn ? btn.textContent : "";
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = "⏳ Spawning Ticket…";
+        }
+        try {
+          const res = await fetch(`${API_BASE}/api/mimir/apply`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "mimir_spawn_delta_ticket",
+              deltaId,
+              filePath: sourceFile || ""
+            })
+          });
+          const data = await res.json();
+          if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+          if (data.agentPrompt && navigator.clipboard && navigator.clipboard.writeText) {
+            try { await navigator.clipboard.writeText(data.agentPrompt); } catch {}
+          }
+          if (data.projects) allProjects = data.projects;
+          if (data.mimirAudit || data.audit) mimirAuditData = data.mimirAudit || data.audit;
+          renderMimirAudit(activeMimirProjectFilter);
+          renderProjects();
+          notifyUser(
+            "🎫 Mímir Delta Ticket Spawned",
+            `Spawned ${data.spawnedTicketId} in Phase 1 (copied /odin launch prompt to clipboard).`,
+            "done"
+          );
+        } catch (err) {
+          showToast("🚨 Spawn Error", err.message || String(err));
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = origText;
+          }
+        }
+      }
+
       function openMimirModal(filterProjectSlug = null) {
         const dlg = document.getElementById("mimir-dialog");
         if (!dlg) return;
@@ -2493,6 +2560,10 @@
           openUpdateModal(proj, "reject");
         } else if (action === "open-mimir-modal") {
           openMimirModal(proj.slug);
+        } else if (action === "mimir-card-spawn") {
+          const deltaId = btn.getAttribute("data-delta-id");
+          const filePath = btn.getAttribute("data-file-path") || proj.filepath || proj.id || "";
+          spawnMimirDeltaTicket(deltaId, filePath, btn);
         } else if (action === "mimir-card-status") {
           const deltaId = btn.getAttribute("data-delta-id");
           const nextStatus = btn.getAttribute("data-status") || "applied";
@@ -2544,44 +2615,7 @@
           } catch {}
         } else if (action === "spawn-ticket") {
           const sourceFile = btn.getAttribute("data-source-file") || item.source_file || item.state_file || "";
-          btn.disabled = true;
-          const origText = btn.textContent;
-          btn.textContent = "⏳ Spawning Ticket…";
-          try {
-            const res = await fetch(`${API_BASE}/api/mimir/apply`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                action: "mimir_spawn_delta_ticket",
-                deltaId,
-                filePath: sourceFile,
-              }),
-            });
-            const data = await res.json();
-            if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
-            if (data.agentPrompt && navigator.clipboard && navigator.clipboard.writeText) {
-              try { await navigator.clipboard.writeText(data.agentPrompt); } catch {}
-            }
-            if (data.audit) {
-              mimirAuditData = data.audit;
-              renderMimirAudit(activeMimirProjectFilter);
-            }
-            if (data.projects) {
-              projectsData = data.projects;
-              renderAll();
-            }
-            notifyUser(
-              "🎫 Mímir Delta Ticket Spawned",
-              data.watcherArmed
-                ? `Spawned ${data.spawnedTicketId} and woke armed Claude Code agent.`
-                : `Spawned ${data.spawnedTicketId} (copied /odin prompt to clipboard).`,
-              "done"
-            );
-          } catch (err) {
-            showToast("🚨 Spawn Error", err.message || String(err));
-            btn.disabled = false;
-            btn.textContent = origText;
-          }
+          await spawnMimirDeltaTicket(deltaId, sourceFile, btn);
         } else if (action === "mark-status") {
           const nextStatus = btn.getAttribute("data-status") || "applied";
           const sourceFile = btn.getAttribute("data-source-file") || item.source_file || item.state_file || "";

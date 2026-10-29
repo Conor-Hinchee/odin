@@ -50,10 +50,10 @@ DEFAULTS = {
     "progress": {
         "capture": True,
         "check_patterns": [
-            r"\bnpm (run )?(test|lint|typecheck|build)\b",
-            r"\b(pnpm|yarn|bun)( run)? (test|lint|typecheck|build)\b",
+            r"\bnpm (run )?(test|lint|typecheck|build|format|check)(:[\w-]+)?\b",
+            r"\b(pnpm|yarn|bun)( run)? (test|lint|typecheck|build|format|check)(:[\w-]+)?\b",
             r"\bplaywright test\b",
-            r"\b(pytest|vitest|jest)\b",
+            r"\b(pytest|vitest|jest|prettier)\b",
             r"\bpython3? -m (unittest|pytest)\b",
             r"\b(cargo|go) (test|build)\b",
             r"\btsc\b",

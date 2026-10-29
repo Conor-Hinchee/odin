@@ -496,6 +496,7 @@ class TestOdin(unittest.TestCase):
         )
         self.assertTrue(res["ok"])
         self.assertEqual(res["status"], "in_progress")
+        self.assertFalse(res["watcherArmed"])
         self.assertEqual(res["spawnedTicketId"], "odin-states/mimir-delta-test-spawner.html")
 
         child_path = Path(res["spawnedTicketFile"])
@@ -503,6 +504,10 @@ class TestOdin(unittest.TestCase):
         child_html = child_path.read_text(encoding="utf-8")
         self.assertIn('id="odin-child-delta-origin-banner"', child_html)
         self.assertIn("DELTA-TEST-SPAWNER", child_html)
+        self.assertIn('<section id="huginn-plan" data-status="active">', child_html)
+        self.assertIn('<section id="thor-execution" data-status="pending">', child_html)
+        self.assertIn('data-session-id=""', child_html)
+        self.assertIn('class="bifrost-stepper"', child_html)
 
         # Verify parent ticket was NOT stepped back (stays in Iteration 1) and delta is in_progress
         parent_html = self.sample_html_path.read_text(encoding="utf-8")
@@ -512,16 +517,12 @@ class TestOdin(unittest.TestCase):
         self.assertEqual(parent_deltas[0]["status"], "in_progress")
         self.assertEqual(parent_deltas[0]["spawned_ticket_id"], "odin-states/mimir-delta-test-spawner.html")
         self.assertIn("🎫 Open Delta Ticket", parent_html)
-        self.assertIn("⚡ Approve &amp; Spawn Delta Ticket", parent_html)
 
-        # Verify wakeup file was written for parent ticket
+        # Verify NO wakeup file was written for parent ticket (spawned ticket is for a new session)
         wakeup_file = self.states_dir / ".odin-wakeup-sample-v3-feature.json"
-        self.assertTrue(wakeup_file.is_file())
-        wakeup_data = json.loads(wakeup_file.read_text(encoding="utf-8"))
-        self.assertEqual(wakeup_data["decision"], "mimir_spawn_delta_ticket")
-        self.assertEqual(wakeup_data["spawnedTicketId"], "odin-states/mimir-delta-test-spawner.html")
+        self.assertFalse(wakeup_file.is_file())
 
-        # 3. Complete child ticket (hlidskjalf-judge -> done) and verify parent delta auto-syncs to applied
+        # 3. Complete child ticket (hlidskjalf-judge -> done) with ODIN_SESSION_ID set and verify auto-bind + parent sync
         u_args = argparse.Namespace(
             html_file=str(child_path),
             file=str(child_path),
@@ -544,8 +545,20 @@ class TestOdin(unittest.TestCase):
             file_note=None,
             repo_dir=None,
             pr_url=None,
+            incident_waiver=None,
         )
-        self.assertEqual(self.odin_state.cmd_update_phase(u_args), 0)
+        old_sid = os.environ.get("ODIN_SESSION_ID")
+        try:
+            os.environ["ODIN_SESSION_ID"] = "spawned-session-999"
+            self.assertEqual(self.odin_state.cmd_update_phase(u_args), 0)
+        finally:
+            if old_sid is None:
+                os.environ.pop("ODIN_SESSION_ID", None)
+            else:
+                os.environ["ODIN_SESSION_ID"] = old_sid
+
+        child_html_after = child_path.read_text(encoding="utf-8")
+        self.assertIn('data-session-id="spawned-session-999"', child_html_after)
 
         parent_html_after = self.sample_html_path.read_text(encoding="utf-8")
         parent_ledger_after = self.odin_state.extract_ledger(parent_html_after, str(self.sample_html_path))
@@ -554,6 +567,62 @@ class TestOdin(unittest.TestCase):
         self.assertEqual(parent_deltas_after[0]["status"], "applied")
         self.assertIn("✅ APPROVED &amp; APPLIED", parent_html_after)
         self.assertIn("🎫 Open Delta Ticket", parent_html_after)
+
+    def test_phase4_incident_to_delta_gate_blocks_until_delta_or_waiver(self):
+        # Log an incident in Iteration 1
+        log_args = self.odin_state.build_parser().parse_args(
+            [
+                "log",
+                "--file",
+                str(self.sample_html_path),
+                "--phase",
+                "thor-execution",
+                "--kind",
+                "incident",
+                "--text",
+                "🚨 Killed hung/background task cmd-1 (npm run format:dryrun)",
+            ]
+        )
+        self.assertEqual(self.odin_state.run_command(log_args), 0)
+
+        # Attempt to mark hlidskjalf-judge -> done without propose-delta or --incident-waiver
+        block_args = self.odin_state.build_parser().parse_args(
+            [
+                "update-phase",
+                "--file",
+                str(self.sample_html_path),
+                "--phase",
+                "hlidskjalf-judge",
+                "--status",
+                "done",
+                "--summary",
+                "Try finishing without addressing incident",
+            ]
+        )
+        self.assertEqual(self.odin_state.run_command(block_args), 1)
+
+        # Passing --incident-waiver unlocks Phase 4 completion and logs a decision
+        waiver_args = self.odin_state.build_parser().parse_args(
+            [
+                "update-phase",
+                "--file",
+                str(self.sample_html_path),
+                "--phase",
+                "hlidskjalf-judge",
+                "--status",
+                "done",
+                "--summary",
+                "Finished with incident waiver",
+                "--incident-waiver",
+                "Transient local port conflict",
+            ]
+        )
+        self.assertEqual(self.odin_state.run_command(waiver_args), 0)
+        ledger = self.odin_state.extract_ledger(
+            self.sample_html_path.read_text(encoding="utf-8"), str(self.sample_html_path)
+        )
+        events = ledger["iterations"][-1].get("events", [])
+        self.assertTrue(any(e.get("kind") == "decision" and "Incident waiver:" in e.get("text", "") for e in events))
 
     def test_h2_badge_template_never_swallows_adjacent_sections_or_duplicates_top_banners(self):
         badge_tpl_path = self.states_dir / "demo-badge-template.html"

@@ -23,7 +23,7 @@ Optional settings (repos, ports, telemetry, skill pills, PR telemetry, staging) 
 
 ## Ground rules (MANDATORY)
 
-1. **One state file per task.** Store it at `<workspace>/odin-states/<task-slug>.html`, using a descriptive kebab-case slug (`checkout-form-validation`, `migrate-auth-to-jwt`). Create the directory if needed. Before creating a file, list `odin-states/` and resume an existing file if this is the same task. Never write a shared root `odin_state.html`.
+1. **Bootstrap the state file FIRST (one state file per task).** Before reading codebase files or investigating the problem, your very first step upon starting an Odin task must be to create (or resume) `<workspace>/odin-states/<task-slug>.html`, ensure the Odin server is running, and fire the bootstrap notification. Use a descriptive kebab-case slug (`checkout-form-validation`, `migrate-auth-to-jwt`). Create the directory if needed. Before creating a file, list `odin-states/` and resume an existing file if this is the same task. Never write a shared root `odin_state.html`.
 2. **Start from the template.** New state files start from [references/state-template.html](references/state-template.html). Fill in the title and slug, and stamp `<body>` with what you know:
    ```html
    <body data-branch="feat/<task-slug>" data-worktree="<absolute repo or worktree path>"
@@ -47,7 +47,7 @@ Optional settings (repos, ports, telemetry, skill pills, PR telemetry, staging) 
      sh "$ODIN/odin-notify.sh" "Phase 1: Huginn" "<one-line status>" phase "odin-states/<task-slug>.html"
      ```
 6. **Log progress as it happens.** Every iteration card has a timeline, so the state file should show what happened during a phase, not only how it ended.
-   - The plugin's progress hook adds entries on its own for every `git commit`, every check command (tests, lint, typecheck, build, with pass/fail), and every subagent dispatch and return.
+   - The plugin's progress hook adds entries on its own for every `git commit`, every check command (tests, lint, typecheck, format, build — logging `✅` pass, `❌` fail from Antigravity `transcript.jsonl` / `PostToolUseFailure`, or `⏳` when backgrounded), every killed background task (`manage_task(Action="kill")` → `🚨 incident`), every failed `git`/`gh pr` command (`🚨 incident`), and every subagent dispatch and return.
    - Log everything else with `log` the moment it happens, not at the end of the phase. `log` never changes status and never notifies:
      ```bash
      python3 "$ODIN/odin-state.py" log --file "odin-states/<task-slug>.html" --kind <kind> --text "<one line>" [--detail "<longer output>"]
@@ -109,7 +109,8 @@ graph TD
 ```
 
 ### Phase 1: Huginn (plan)
-- Analyze the request and the codebase. Bootstrap the state file, start the server, and send the bootstrap notification (ground rule 5).
+- **Bootstrap FIRST (before codebase reads):** Immediately ensure the server is running (ground rule 3), create `odin-states/<task-slug>.html` from [references/state-template.html](references/state-template.html) (ground rule 2), and send the bootstrap notification (ground rule 5). Do **not** read project source files before the state file is live.
+- **Analyze the request and the codebase:** Once the state file is live, inspect the relevant files and git status, logging key findings (`--kind finding`) and decisions (`--kind decision`) to `#huginn-plan` as you go (ground rule 6).
 - If the user has configured repos, lock in an isolated branch, worktree and ports with `odin-isolate.py allocate` ([references/isolation.md](references/isolation.md)) and stamp them on `<body>`. Otherwise record the current repo and branch. Either way, run ground rule 9's `git status` check first, and plan in a worktree if the checkout has changes this task didn't make.
 - Write into `#huginn-plan`:
   1. **Environment**: branch, worktree, ports.
@@ -162,7 +163,8 @@ graph TD
 
   Write proposals in general terms. An approved delta is committed to the repository that owns the target file, often Odin's own public repo, so describe the pattern without the task's code, names, internal URLs or secrets.
 
-  Proposals stay in the state file's ledger and do not touch the feature branch. They are reviewed later through the dashboard's **🧠 Mímir Harness Audit** or `mimir-audit`, and **Approve & Spawn Delta Ticket** turns one into its own Odin task.
+  Proposals stay in the state file's ledger and do not touch the feature branch. They are reviewed later through the dashboard's **🧠 Mímir Harness Audit** or `mimir-audit`, and **⚡ Approve & Spawn Delta Ticket** (on the project card, in-ticket banner, or Mímir modal) turns one into its own standalone Phase 1 Odin task (`odin-states/mimir-delta-<slug>.html` with `#huginn-plan` active and `data-session-id=""`), copying its `/odin` launch prompt to the clipboard for a fresh session.
+- **Incident-to-delta gate.** If the current iteration logged any `incident` (`🚨`) or failed check (`outcome="fail"`), `update-phase --phase hlidskjalf --status done` blocks completion until you either record a `propose-delta` addressing the friction or pass `--incident-waiver "<reason>"` for a genuinely one-off flake.
 - Mark done.
 
 ### Phase 5: Human validation (sign-off)

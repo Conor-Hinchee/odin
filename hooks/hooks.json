@@ -17,7 +17,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Bash|Agent",
+        "matcher": "Bash|Agent|manage_task",
         "hooks": [
           { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/skills/odin/scripts/odin-progress-hook.py\"", "timeout": 15 }
         ]

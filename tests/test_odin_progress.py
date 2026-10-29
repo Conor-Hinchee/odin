@@ -272,6 +272,112 @@ class TestProgressHook(ProgressBase):
         valkyries = [e["text"] for e in events if e["kind"] == "valkyrie"]
         self.assertEqual(valkyries, ["Dispatched Brunhild: core logic (self)"])
 
+    def test_antigravity_transcript_exit_code_background_kill_and_gh_pr_failure(self):
+        env = {**os.environ, "ODIN_ROOT": str(self.root)}
+        transcript_path = self.root / "transcript.jsonl"
+
+        def write_transcript_lines(lines: list[dict]) -> None:
+            transcript_path.write_text("\n".join(json.dumps(x) for x in lines) + "\n", encoding="utf-8")
+
+        # 1. Non-zero exit code in transcript.jsonl on a format check command
+        write_transcript_lines([
+            {
+                "type": "PLANNER_RESPONSE",
+                "tool_calls": [{"id": "c1", "name": "run_command", "args": {"CommandLine": "npm run format:dryrun"}}],
+            },
+            {
+                "type": "TOOL_RESPONSE",
+                "content": "Command exited with code 1.\nOutput:\n[warn] src/app.ts\nCode style issues found in the above file.",
+            },
+        ])
+        res = subprocess.run(
+            [sys.executable, str(HOOK_SCRIPT)],
+            input=json.dumps({
+                "conversationId": SESSION_ID,
+                "workspacePaths": [str(self.repo)],
+                "transcript_path": str(transcript_path),
+                "toolCall": {"name": "run_command", "args": {"CommandLine": "npm run format:dryrun"}},
+            }),
+            text=True,
+            capture_output=True,
+            env=env,
+        )
+        self.assertEqual(res.returncode, 0)
+
+        # 2. Backgrounded check command in transcript.jsonl, followed by manage_task(Action="kill")
+        write_transcript_lines([
+            {
+                "type": "PLANNER_RESPONSE",
+                "tool_calls": [{"id": "c2", "name": "run_command", "args": {"CommandLine": "npm run test:unit"}}],
+            },
+            {
+                "type": "TOOL_RESPONSE",
+                "content": "Tool is running as a background task with task id: cmd-hang-77.\nOutput:\n",
+            },
+        ])
+        subprocess.run(
+            [sys.executable, str(HOOK_SCRIPT)],
+            input=json.dumps({
+                "conversationId": SESSION_ID,
+                "workspacePaths": [str(self.repo)],
+                "transcript_path": str(transcript_path),
+                "toolCall": {"name": "run_command", "args": {"CommandLine": "npm run test:unit"}},
+            }),
+            text=True,
+            capture_output=True,
+            env=env,
+        )
+        subprocess.run(
+            [sys.executable, str(HOOK_SCRIPT)],
+            input=json.dumps({
+                "conversationId": SESSION_ID,
+                "workspacePaths": [str(self.repo)],
+                "transcript_path": str(transcript_path),
+                "toolCall": {"name": "manage_task", "args": {"Action": "kill", "TaskId": "cmd-hang-77"}},
+            }),
+            text=True,
+            capture_output=True,
+            env=env,
+        )
+
+        # 3. Failed gh pr create command in transcript.jsonl -> logs incident
+        write_transcript_lines([
+            {
+                "type": "PLANNER_RESPONSE",
+                "tool_calls": [{"id": "c3", "name": "run_command", "args": {"CommandLine": "gh pr create --fill"}}],
+            },
+            {
+                "type": "TOOL_RESPONSE",
+                "content": "Command exited with code 1.\nOutput:\npull request create failed: GraphQL: must be a collaborator",
+            },
+        ])
+        subprocess.run(
+            [sys.executable, str(HOOK_SCRIPT)],
+            input=json.dumps({
+                "conversationId": SESSION_ID,
+                "workspacePaths": [str(self.repo)],
+                "transcript_path": str(transcript_path),
+                "toolCall": {"name": "run_command", "args": {"CommandLine": "gh pr create --fill"}},
+            }),
+            text=True,
+            capture_output=True,
+            env=env,
+        )
+
+        events = self.ledger_events()
+        tests = [(e.get("outcome"), e["text"]) for e in events if e["kind"] == "test"]
+        self.assertEqual(tests, [("fail", "❌ npm run format:dryrun (exit 1)")])
+        steps = [e["text"] for e in events if e["kind"] == "step"]
+        self.assertEqual(steps, ["⏳ npm run test:unit (backgrounded: cmd-hang-77)"])
+        incidents = [e["text"] for e in events if e["kind"] == "incident"]
+        self.assertEqual(
+            incidents,
+            [
+                "🚨 Killed hung/background task (cmd-hang-77): npm run test:unit",
+                "🚨 Command failed (exit 1): gh pr create --fill",
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

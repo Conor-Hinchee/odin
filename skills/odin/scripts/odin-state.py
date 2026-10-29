@@ -580,7 +580,8 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
             if (data.agentPrompt && navigator.clipboard) {
               try { await navigator.clipboard.writeText(data.agentPrompt); } catch (_) {}
             }
-            location.reload();
+            spawnDeltaBtn.textContent = "✅ Spawned! (/odin Prompt Copied)";
+            setTimeout(() => location.reload(), 650);
           } catch (err) {
             alert("Mímir Delta Spawn Error: " + (err.message || err));
             spawnDeltaBtn.textContent = origLabel;
@@ -1821,13 +1822,19 @@ ODIN_TOP_BANNER_SCRIPT = render_ports(ODIN_TOP_BANNER_SCRIPT, CONFIG).replace(
 
 
 def _render_skill_pills_html(selected_skills: list | None = None) -> str:
-    selected = {
-        (s.get("id") or s.get("name") or s.get("skill") or "") if isinstance(s, dict) else str(s)
+    selected_list = [
+        ((s.get("id") or s.get("name") or s.get("skill") or "") if isinstance(s, dict) else str(s)).strip()
         for s in (selected_skills or [])
-    }
+    ]
+    selected = {s for s in selected_list if s}
     pills = []
-    for sk_item in DEFAULT_SKILL_PILLS:
-        sk = sk_item.get("id") or sk_item.get("label") or "" if isinstance(sk_item, dict) else str(sk_item)
+    seen: set[str] = set()
+    all_items = list(DEFAULT_SKILL_PILLS) + [s for s in selected_list if s]
+    for sk_item in all_items:
+        sk = (sk_item.get("id") or sk_item.get("label") or "" if isinstance(sk_item, dict) else str(sk_item)).strip()
+        if not sk or sk in seen:
+            continue
+        seen.add(sk)
         is_act = sk in selected
         cls = "odin-skill-pill active" if is_act else "odin-skill-pill"
         bg = "rgba(56,189,248,0.24)" if is_act else "var(--surface-elevated)"
@@ -2393,7 +2400,7 @@ def sync_top_banners_in_html(content: str, ledger: dict, telemetry: dict | None 
             )
 
             spawn_btn_label = (
-                "⚡ Re-Wake Agent / Sync Delta Ticket"
+                "📋 Copy Launch Prompt / Sync Delta Ticket"
                 if spawned_ticket_url and d_status == "in_progress"
                 else "⚡ Approve &amp; Spawn Delta Ticket"
             )
@@ -3033,6 +3040,7 @@ def _log_progress_locked(
     html_path: Path, kind: str, text: str, phase_key: str, detail: str, outcome: str, extra: dict | None, ts: str
 ) -> bool:
     content = html_path.read_text(encoding="utf-8")
+    content = _maybe_bind_session_id(content)
     ledger = extract_ledger(content, str(html_path))
     iteration = int(ledger.get("current_iteration", 1))
     phase_key = phase_key or current_phase_key(content)
@@ -4196,6 +4204,67 @@ def generate_contextual_diff_html(
     return "\n".join(parts)
 
 
+def _unaddressed_friction_events(ledger: dict) -> list[dict]:
+    """Return mid-flight incident or failed check events when no Mímir delta or explicit waiver exists."""
+    if ledger.get("parent_delta_id") or ledger.get("mimir_delta_origin"):
+        return []
+    if _collect_all_deltas(ledger):
+        return []
+    if str(ledger.get("incident_waiver") or "").strip():
+        return []
+    for it_obj in ledger.get("iterations", []):
+        if str(it_obj.get("incident_waiver") or "").strip():
+            return []
+    friction: list[dict] = []
+    for it_obj in ledger.get("iterations", []):
+        for ev in it_obj.get("events") or []:
+            if not isinstance(ev, dict):
+                continue
+            if ev.get("kind") == "incident" or ev.get("outcome") == "fail":
+                friction.append(ev)
+    return friction
+
+
+def _maybe_bind_session_id(content: str, explicit_session_id: str | None = None) -> str:
+    """Bind data-session-id onto <body> if explicitly passed or if currently empty and ODIN_SESSION_ID is set."""
+    sid = (explicit_session_id or "").strip()
+    if sid:
+        return set_body_env(content, session_id=sid)
+    env_sid = (os.environ.get("ODIN_SESSION_ID") or "").strip()
+    if not env_sid:
+        return content
+    m_sid = re.search(r'\bdata-session-id=["\']([^"\']*)["\']', content)
+    if m_sid and not m_sid.group(1).strip():
+        return set_body_env(content, session_id=env_sid)
+    return content
+
+
+def _resolve_delta_repo_and_worktree(repo_name: str, target_file: str, scan_root: str = AI_DEV_ROOT) -> tuple[str, str]:
+    """Resolve the git worktree directory and repo name from target_file or repo_name."""
+    repo_clean = (repo_name or "odin").strip()
+    target_clean = (target_file or "").strip()
+    if target_clean:
+        cand_paths = [Path(target_clean)]
+        if not Path(target_clean).is_absolute():
+            cand_paths.append(Path(scan_root) / target_clean)
+        for cp in cand_paths:
+            cur = cp if cp.is_dir() else cp.parent
+            while True:
+                if cur.exists() and (cur / ".git").exists():
+                    git_root = str(cur.resolve())
+                    if (not repo_clean or repo_clean == "odin") and cur.name and cur.name != "odin":
+                        repo_clean = cur.name
+                    return repo_clean, git_root
+                if cur.parent == cur:
+                    break
+                cur = cur.parent
+    worktree_dir = ODIN_REPO_DIR
+    cand_repo = Path(scan_root) / repo_clean
+    if cand_repo.is_dir():
+        worktree_dir = str(cand_repo.resolve())
+    return repo_clean, worktree_dir
+
+
 def cmd_update_phase(args: argparse.Namespace) -> int:
     try:
         html_path = _resolve_html_path(args)
@@ -4207,12 +4276,34 @@ def cmd_update_phase(args: argparse.Namespace) -> int:
         return 1
 
     content = html_path.read_text(encoding="utf-8")
+    content = _maybe_bind_session_id(content, getattr(args, "session_id", None))
     ledger = extract_ledger(content, str(html_path))
     target_iter = int(args.iteration) if args.iteration else int(ledger.get("current_iteration", 1))
     phase_key = PHASE_ALIASES.get(args.phase.lower())
     if not phase_key or phase_key not in PHASE_MAP:
         print(f"Error: Invalid phase {args.phase}", file=sys.stderr)
         return 1
+
+    incident_waiver = (getattr(args, "incident_waiver", None) or "").strip()
+    if incident_waiver:
+        ledger["incident_waiver"] = incident_waiver
+        for it_obj in ledger.get("iterations", []):
+            if int(it_obj.get("iteration", 0)) == target_iter:
+                it_obj["incident_waiver"] = incident_waiver
+
+    if phase_key == "hlidskjalf" and args.status == "done":
+        unaddressed = _unaddressed_friction_events(ledger)
+        if unaddressed:
+            lines = [
+                f"Error: Phase 4 (Hlidskjalf) cannot be marked DONE while {len(unaddressed)} mid-flight incident/failure event(s) remain unaddressed:"
+            ]
+            for ev in unaddressed[:5]:
+                lines.append(f"  - [{ev.get('phase', 'thor')}] {ev.get('text', '')}")
+            lines.append(
+                "Record a Mímir Harness Delta (`odin-state.py propose-delta --file ...`) first, or pass `--incident-waiver \"<why no harness delta is needed>\"`."
+            )
+            print("\n".join(lines), file=sys.stderr)
+            return 1
 
     sec_id, _, phase_title = PHASE_MAP[phase_key]
     prev_status = _get_section_status(content, phase_key)
@@ -4344,6 +4435,14 @@ def cmd_update_phase(args: argparse.Namespace) -> int:
         ledger.setdefault("iterations", []).append(new_it)
     if transition_event:
         record_ledger_event(ledger, target_iter, transition_event)
+    if incident_waiver:
+        waiver_text = f"Incident waiver: {incident_waiver}"
+        content, _ = append_progress_log(content, phase_key, target_iter, "decision", waiver_text)
+        record_ledger_event(
+            ledger,
+            target_iter,
+            {"ts": now_iso(), "phase": phase_key, "kind": "decision", "text": waiver_text},
+        )
 
     content = save_ledger_into_html(content, ledger)
     html_path.write_text(content, encoding="utf-8")
@@ -4406,7 +4505,7 @@ ENV_BAR_PATTERNS = {
 }
 
 
-def set_body_env(content: str, branch=None, worktree=None, app_port=None, backend_port=None) -> str:
+def set_body_env(content: str, branch=None, worktree=None, app_port=None, backend_port=None, session_id=None) -> str:
     body_m = re.search(r"""<body\b(?:[^>"']|"[^"]*"|'[^']*')*>""", content, re.IGNORECASE)
     if not body_m:
         return content
@@ -4416,6 +4515,7 @@ def set_body_env(content: str, branch=None, worktree=None, app_port=None, backen
         ("data-worktree", worktree),
         ("data-app-port", app_port),
         ("data-backend-port", backend_port),
+        ("data-session-id", session_id),
     ):
         if value is None:
             continue
@@ -4451,9 +4551,10 @@ def cmd_set_env(args: argparse.Namespace) -> int:
         "worktree": os.path.abspath(args.worktree) if args.worktree else None,
         "app_port": args.app_port,
         "backend_port": args.backend_port,
+        "session_id": getattr(args, "session_id", None),
     }
     if all(v is None for v in changes.values()):
-        print("Error: pass at least one of --branch, --worktree, --app-port, --backend-port", file=sys.stderr)
+        print("Error: pass at least one of --branch, --worktree, --app-port, --backend-port, --session-id", file=sys.stderr)
         return 1
     content = set_body_env(html_path.read_text(encoding="utf-8"), **changes)
     html_path.write_text(content, encoding="utf-8")
@@ -4483,11 +4584,12 @@ def cmd_propose_delta(args: argparse.Namespace) -> int:
     content = html_path.read_text(encoding="utf-8")
     ledger = extract_ledger(content, str(html_path))
     target_iter = int(args.iteration) if args.iteration else int(ledger.get("current_iteration", 1))
+    resolved_repo, _ = _resolve_delta_repo_and_worktree(args.repo or "odin", target_file)
 
     delta_obj = {
         "id": args.id,
         "iteration": target_iter,
-        "repo": args.repo or "odin",
+        "repo": resolved_repo,
         "target_file": target_file,
         "priority": args.priority.lower(),
         "category": args.category.lower(),
@@ -4511,7 +4613,7 @@ def cmd_propose_delta(args: argparse.Namespace) -> int:
         f'style="margin-top: 12px; border-color: rgba(245, 158, 11, 0.45);">\n'
         f'            <h3>🧠 Harness Delta Proposal: <code>{html_mod.escape(args.id)}</code> '
         f'<span class="tag">{html_mod.escape(args.priority.upper())}</span> '
-        f'<span class="tag">{html_mod.escape(args.repo or "odin")}</span></h3>\n'
+        f'<span class="tag">{html_mod.escape(resolved_repo)}</span></h3>\n'
         f"            <p><strong>Target Harness File:</strong> <code>{html_mod.escape(target_file)}</code> &bull; "
         f"<strong>Category:</strong> <code>{html_mod.escape(args.category)}</code></p>\n"
         f"            <p><strong>Root Cause (Iter {target_iter}):</strong> {html_mod.escape(root_cause)}</p>\n"
@@ -4834,123 +4936,69 @@ def _build_child_delta_ticket_html(
     delta_id: str,
     parent_rel: str,
     plan_html: str,
+    repo_name: str = "",
 ) -> str:
     title_esc = html_mod.escape(title)
     wt_esc = html_mod.escape(worktree_dir, quote=True)
-    sid_esc = html_mod.escape(session_id, quote=True)
+    sid_esc = html_mod.escape(session_id or "", quote=True)
     did_esc = html_mod.escape(delta_id, quote=True)
     prel_esc = html_mod.escape(parent_rel, quote=True)
-    slug_esc = html_mod.escape(child_slug)
+    slug_esc = html_mod.escape(child_slug, quote=True)
+    repo_display = html_mod.escape(repo_name or os.path.basename(worktree_dir.rstrip("/")) or "odin")
+    template_path = Path(__file__).resolve().parent.parent / "references" / "state-template.html"
+    if template_path.exists():
+        tpl = template_path.read_text(encoding="utf-8")
+        tpl = tpl.replace("<Task Name>", title_esc)
+        tpl = tpl.replace("<task-slug>", slug_esc)
+        tpl = tpl.replace("<absolute-worktree-path>", wt_esc)
+        tpl = tpl.replace("<app-port>", "8788")
+        tpl = tpl.replace("<backend-port>", "")
+        tpl = tpl.replace("<session-id>", sid_esc)
+        tpl = tpl.replace("&lt;repo&gt;", repo_display)
+        tpl = tpl.replace("&lt;app-port&gt;", "8788")
+        tpl = tpl.replace("&lt;backend-port&gt;", "none")
+        tpl = tpl.replace("2026-01-01T00:00:00Z", now_iso())
+        tpl = re.sub(
+            r'(<body\b[^>]*?)(>)',
+            lambda m: f'{m.group(1)} data-parent-delta-id="{did_esc}" data-parent-state-file="{prel_esc}">',
+            tpl,
+            count=1,
+        )
+        tpl = tpl.replace(
+            '<a class="step-node" href="#huginn-plan" id="step-huginn" data-step-status="pending">\n        <div class="step-top"><span>Phase I</span><span class="step-state">Pending</span></div>',
+            '<a class="step-node" href="#huginn-plan" id="step-huginn" data-step-status="active">\n        <div class="step-top"><span>Phase I</span><span class="step-state">Active</span></div>',
+            1,
+        )
+        tpl = tpl.replace(
+            "<!-- Plan, Test Strategy, DoD, Subagent Matrix -->",
+            plan_html,
+            1,
+        )
+        return tpl
     return f"""<!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>⚡ [ACTIVE] ⚡ Odin Command Center — {title_esc}</title>
-  <style>
-    :root {{
-      color-scheme: light dark;
-      --bg-light: #f8fafc; --bg-dark: #070b14;
-      --surface-light: #ffffff; --surface-dark: #0f172a;
-      --surface-elevated-light: #f1f5f9; --surface-elevated-dark: #162038;
-      --text-light: #0f172a; --text-dark: #e2e8f0;
-      --muted-light: #475569; --muted-dark: #94a3b8;
-      --border-light: #cbd5e1; --border-dark: #1e293b;
-      --gold: #f59e0b; --cyan: #38bdf8; --emerald: #10b981; --crimson: #f43f5e; --violet: #a855f7;
-      --bg: var(--bg-dark); --surface: var(--surface-dark); --surface-elevated: var(--surface-elevated-dark);
-      --text: var(--text-dark); --muted: var(--muted-dark); --border: var(--border-dark);
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
-      margin: 0;
-      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: var(--bg); color: var(--text); line-height: 1.65; min-height: 100vh; padding-bottom: 4rem;
-    }}
-    .odin-header {{
-      position: sticky; top: 0; z-index: 40; backdrop-filter: blur(16px);
-      background: color-mix(in srgb, var(--surface) 85%, transparent);
-      border-bottom: 1px solid var(--border); padding: 0.9rem 1.5rem;
-    }}
-    .odin-header-inner {{
-      max-width: 1120px; margin: 0 auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem;
-    }}
-    .brand-title {{ font-size: 1.15rem; font-weight: 800; margin: 0; color: var(--gold); }}
-    .brand-subtitle {{ font-size: 0.78rem; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
-    .controls {{ display: flex; align-items: center; flex-wrap: wrap; gap: 0.55rem; }}
-    .btn {{
-      appearance: none; border: 1px solid var(--border); background: var(--surface-elevated); color: var(--text);
-      font-size: 0.78rem; font-weight: 600; padding: 0.42rem 0.78rem; border-radius: 999px; cursor: pointer;
-      display: inline-flex; align-items: center; gap: 0.4rem;
-    }}
-    .container {{ max-width: 1120px; margin: 1.5rem auto; padding: 0 1.5rem; }}
-    section {{
-      background: var(--surface); border: 1px solid var(--border); border-left: 5px solid var(--border);
-      border-radius: 16px; padding: 1.4rem 1.6rem; margin-bottom: 1.35rem;
-    }}
-    section[data-status="done"] {{ border-left-color: var(--emerald); }}
-    section[data-status="active"] {{ border-left-color: var(--cyan); }}
-    section[data-status="awaiting_human"] {{ border-left-color: var(--gold); }}
-    section[data-status="reject"] {{ border-left-color: var(--crimson); }}
-    .phase-header {{
-      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem;
-      margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--border);
-    }}
-    .phase-title {{ font-size: 1.15rem; font-weight: 700; margin: 0; }}
-    .badge-done, .badge-active, .badge-pending, .badge-reject, .badge-awaiting_human {{
-      display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.22rem 0.68rem;
-      border-radius: 999px; font-size: 0.74rem; font-weight: 700; text-transform: uppercase;
-    }}
-    .badge-done {{ background: rgba(16, 185, 129, 0.16); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }}
-    .badge-active {{ background: rgba(56, 189, 248, 0.16); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.45); }}
-    .badge-awaiting_human {{ background: rgba(245, 158, 11, 0.18); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.55); }}
-    .badge-pending {{ background: rgba(148, 163, 184, 0.14); color: var(--muted); border: 1px solid rgba(148, 163, 184, 0.28); }}
-    .badge-reject {{ background: rgba(244, 63, 94, 0.16); color: #fb7185; border: 1px solid rgba(244, 63, 94, 0.45); }}
-    details.odin-iteration-card {{
-      background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 12px; margin: 0.85rem 0; overflow: hidden;
-    }}
-    details.odin-iteration-card > summary {{
-      cursor: pointer; padding: 0.75rem 1rem; font-weight: 700; font-size: 0.92rem; display: flex; justify-content: space-between;
-    }}
-    pre, code {{
-      color-scheme: only dark; background: #090d16; color: #e2e8f0;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.84rem; border-radius: 6px;
-    }}
-    code {{ padding: 0.15rem 0.4rem; border: 1px solid #1e293b; }}
-    pre {{ padding: 1rem; overflow-x: auto; border: 1px solid #1e293b; }}
-  </style>
 </head>
-<body data-branch="main" data-worktree="{wt_esc}" data-app-port="" data-backend-port="" data-session-id="{sid_esc}" data-parent-delta-id="{did_esc}" data-parent-state-file="{prel_esc}">
-  <header class="odin-header">
-    <div class="odin-header-inner">
-      <div>
-        <h1 class="brand-title">ODIN ALLFATHER — {title_esc}</h1>
-        <div class="brand-subtitle" id="odin-meta">slug: {slug_esc} • spawned from: {prel_esc}</div>
-      </div>
-      <div class="controls">
-        <a class="btn" href="/" onclick="if(location.protocol==='file:'){{location.href='http://127.0.0.1:8788/';return false;}}" style="text-decoration:none">🏛️ All Projects</a>
-        <button type="button" class="btn" id="odin-mute-btn">🔊 Sound: ON</button>
-        <button type="button" class="btn" id="odin-theme-btn">☀️ Theme</button>
-      </div>
-    </div>
-  </header>
+<body data-branch="feat/{slug_esc}" data-worktree="{wt_esc}" data-app-port="8788" data-backend-port="" data-session-id="{sid_esc}" data-parent-delta-id="{did_esc}" data-parent-state-file="{prel_esc}">
   <main class="container">
-    <section id="huginn-plan" data-status="done">
+    <section id="huginn-plan" data-status="active">
       <div class="phase-header">
         <h2 class="phase-title">🪶 Phase 1: Huginn (Spawned Mímir Delta Blueprint)</h2>
-        <span class="badge-done">DONE</span>
+        <span class="badge-active">ACTIVE</span>
       </div>
       <div class="phase-body">
         {plan_html}
       </div>
     </section>
-    <section id="thor-execution" data-status="active">
+    <section id="thor-execution" data-status="pending">
       <div class="phase-header">
         <h2 class="phase-title">⚡ Phase 2: Thor &amp; Valkyries (Delta Implementation)</h2>
-        <span class="badge-active">ACTIVE</span>
+        <span class="badge-pending">PENDING</span>
       </div>
-      <div class="phase-body">
-        <p>Ready for Thor execution to apply Mímir Harness Delta <code>{did_esc}</code>.</p>
-      </div>
+      <div class="phase-body"></div>
     </section>
     <section id="heimdall-validation" data-status="pending">
       <div class="phase-header">
@@ -4984,9 +5032,9 @@ def spawn_mimir_delta_ticket(
     scan_root: str = AI_DEV_ROOT,
     parent_file: str = "",
 ) -> dict:
-    """Create a dedicated child Odin Delta Ticket (odin-states/mimir-delta-<slug>.html) from a Mímir Harness Delta Proposal,
-    link it onto the parent ticket's delta entry (status='in_progress') without stepping back or altering the parent ticket's phases,
-    and trigger a reactive wakeup event if a watcher is armed."""
+    """Create a dedicated standalone Odin Delta Ticket (odin-states/mimir-delta-<slug>.html) from a Mímir Harness Delta Proposal
+    starting in Phase 1 (#huginn-plan = active, #thor-execution = pending, data-session-id="") built from state-template.html,
+    and link it onto the parent ticket's delta entry (status='in_progress') without waking or hijacking the parent ticket's watcher."""
     target_delta = None
     parent_path: Path | None = None
 
@@ -5033,26 +5081,23 @@ def spawn_mimir_delta_ticket(
     except ValueError:
         parent_rel = f"odin-states/{parent_path.name}"
 
-    repo_name = (target_delta.get("repo") or "odin").strip()
+    raw_repo_name = (target_delta.get("repo") or "odin").strip()
     target_file = (target_delta.get("target_file") or target_delta.get("target") or "SKILL.md").strip()
+    repo_name, worktree_dir = _resolve_delta_repo_and_worktree(raw_repo_name, target_file, scan_root)
     priority = (target_delta.get("priority") or "p1").upper()
     category = (target_delta.get("category") or "harness").strip()
     root_cause = (target_delta.get("root_cause") or "Harness delta proposal").strip()
     proposed_diff = (target_delta.get("proposed_diff") or "").strip()
 
-    worktree_dir = ODIN_REPO_DIR
-    cand_repo = Path(scan_root) / repo_name
-    if cand_repo.is_dir():
-        worktree_dir = str(cand_repo.resolve())
-
-    # 1. Create or refresh child Odin Delta Ticket in Phase 1 (done -> Thor Execution ready)
+    # 1. Create or refresh standalone child Odin Delta Ticket in Phase 1 (active -> awaits Phase 1 blueprint approval)
     parent_content = parent_path.read_text(encoding="utf-8")
-    m_sid = re.search(r'data-session-id=["\']([^"\']+)["\']', parent_content)
-    session_id = m_sid.group(1) if m_sid else ""
+    session_id = ""
     child_title = f"Mímir Harness Delta: {delta_id} ({repo_name} → {target_file})"
 
     plan_html = (
-        f"<h4>🧠 Spawned Mímir Harness Delta Blueprint — <code>{html_mod.escape(delta_id)}</code></h4>"
+        f"<h4>🧠 Spawned Mímir Harness Delta Intake — <code>{html_mod.escape(delta_id)}</code></h4>"
+        f"<p><strong>Phase 1 Instructions:</strong> Inspect the target file <code>{html_mod.escape(target_file)}</code> in <code>{html_mod.escape(worktree_dir)}</code>, "
+        f"finalize the exact Phase 1 implementation blueprint &amp; test strategy for this harness guardrail, and set <code>#huginn-plan</code> to <code>awaiting_human</code> before proceeding to Phase 2.</p>"
         f"<ul>"
         f"<li><strong>Parent Ticket:</strong> <a href=\"/{html_mod.escape(parent_rel)}\" target=\"_blank\"><code>{html_mod.escape(parent_rel)}</code> ↗</a></li>"
         f"<li><strong>Target Repo &amp; File:</strong> <code>{html_mod.escape(repo_name)}</code> → <code>{html_mod.escape(target_file)}</code> (Worktree: <code>{html_mod.escape(worktree_dir)}</code>)</li>"
@@ -5063,7 +5108,13 @@ def spawn_mimir_delta_ticket(
         f"<pre style=\"white-space:pre-wrap;font-size:11px;\"><code>{html_mod.escape(proposed_diff)}</code></pre>"
     )
 
-    if not child_path.exists():
+    need_rebuild = not child_path.exists()
+    if child_path.exists():
+        existing_html = child_path.read_text(encoding="utf-8")
+        if 'class="bifrost-stepper"' not in existing_html:
+            need_rebuild = True
+
+    if need_rebuild:
         c_content = _build_child_delta_ticket_html(
             child_slug=child_slug,
             title=child_title,
@@ -5072,6 +5123,7 @@ def spawn_mimir_delta_ticket(
             delta_id=delta_id,
             parent_rel=parent_rel,
             plan_html=plan_html,
+            repo_name=repo_name,
         )
     else:
         c_content = child_path.read_text(encoding="utf-8")
@@ -5081,6 +5133,12 @@ def spawn_mimir_delta_ticket(
     c_ledger["title"] = child_title
     c_ledger["parent_delta_id"] = delta_id
     c_ledger["parent_ticket"] = parent_rel
+    if c_ledger.get("iterations"):
+        c_ledger["iterations"][0].setdefault("phases", {})["huginn"] = {
+            "status": "active",
+            "updated_at": now_iso(),
+            "summary": f"Phase 1 Huginn intake for {delta_id} ({repo_name} -> {target_file})",
+        }
     c_ledger["mimir_delta_origin"] = {
         "delta_id": delta_id,
         "parent_state_file": str(parent_path),
@@ -5098,69 +5156,32 @@ def spawn_mimir_delta_ticket(
     c_content = update_document_title(c_content)
     child_path.write_text(c_content, encoding="utf-8")
 
-    # 2. Update parent ticket's delta status -> in_progress & attach spawned_ticket_id/url WITHOUT touching parent phases
+    # 2. Update parent ticket's delta status -> in_progress & attach spawned_ticket_id/url WITHOUT touching parent phases or waking parent watcher
     p_ledger = extract_ledger(parent_content, str(parent_path))
     for it_obj in p_ledger.get("iterations", []):
         for d in it_obj.get("harness_delta_proposals", []):
             if d.get("id") == delta_id:
                 d["status"] = "in_progress"
+                d["repo"] = repo_name
                 d["spawned_ticket_id"] = child_rel
                 d["spawned_ticket_url"] = child_url
                 d["updated_at"] = now_iso()
     for d in p_ledger.get("harness_delta_proposals", []):
         if d.get("id") == delta_id:
             d["status"] = "in_progress"
+            d["repo"] = repo_name
             d["spawned_ticket_id"] = child_rel
             d["spawned_ticket_url"] = child_url
             d["updated_at"] = now_iso()
     parent_content = save_ledger_into_html(parent_content, p_ledger)
     parent_path.write_text(parent_content, encoding="utf-8")
 
-    # 3. Check if any watcher is armed on parent_path (or any active watcher in states_dir) and write wakeup event
-    watcher_armed = is_watcher_armed_for_file(parent_path)
     agent_prompt = (
         f"/odin Execute spawned Mímir Harness Delta ticket `{child_rel}` (`{child_path}`) "
         f"for `{delta_id}` (`{repo_name}` -> `{target_file}`). "
-        f"Leave parent ticket `{parent_rel}` untouched; when `{child_rel}` completes, parent delta status auto-syncs to APPLIED."
+        f"Start in Phase 1 (`#huginn-plan`): inspect `{target_file}`, refine the Phase 1 blueprint, and pause for human approval before Phase 2. "
+        f"Leave parent ticket `{parent_rel}` untouched; when `{child_rel}` completes Phase 5, parent delta status auto-syncs to APPLIED."
     )
-    wakeup_notes = (
-        f"Partner approved Mímir Harness Delta `{delta_id}` and spawned dedicated Delta Ticket `{child_rel}` "
-        f"({child_url}). Execute `{child_path}` through Phases 2–5 to apply the harness guardrail to `{repo_name}` -> `{target_file}`."
-    )
-    write_wakeup_event(
-        parent_path,
-        decision="mimir_spawn_delta_ticket",
-        phase="human-validation",
-        notes=wakeup_notes,
-        extra={
-            "deltaId": delta_id,
-            "spawnedTicketId": child_rel,
-            "spawnedTicketFile": str(child_path),
-            "spawnedTicketUrl": child_url,
-            "agentPrompt": agent_prompt,
-        },
-    )
-    # Also wake any other currently armed watcher in states_dir if the user clicked from Dashboard or another ticket
-    if not watcher_armed:
-        for wf in states_dir.glob(".odin-watcher-*.json"):
-            other_slug = wf.stem[len(".odin-watcher-"):]
-            other_html = states_dir / f"{other_slug}.html"
-            if other_html.exists() and is_watcher_armed_for_file(other_html):
-                watcher_armed = True
-                write_wakeup_event(
-                    other_html,
-                    decision="mimir_spawn_delta_ticket",
-                    phase="human-validation",
-                    notes=wakeup_notes,
-                    extra={
-                        "deltaId": delta_id,
-                        "spawnedTicketId": child_rel,
-                        "spawnedTicketFile": str(child_path),
-                        "spawnedTicketUrl": child_url,
-                        "agentPrompt": agent_prompt,
-                    },
-                )
-                break
 
     return {
         "ok": True,
@@ -5171,7 +5192,7 @@ def spawn_mimir_delta_ticket(
         "spawnedTicketFile": str(child_path),
         "spawnedTicketId": child_rel,
         "spawnedTicketUrl": child_url,
-        "watcherArmed": watcher_armed,
+        "watcherArmed": False,
         "agentPrompt": agent_prompt,
     }
 
@@ -6067,6 +6088,8 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--file-note", action="append", help="Per-file 'Why This File Changed' explanation (format: 'path/to/file.js=Explanation' or JSON dict; repeatable)")
     up.add_argument("--repo-dir", action="append", help="Explicit git repository/worktree directory (repeatable for multi-repo diffs; defaults to body[data-worktree])")
     up.add_argument("--pr-url", help="GitHub Pull Request URL to stamp on <body> and render in the header & phase card")
+    up.add_argument("--session-id", dest="session_id", help="Optional session ID to bind onto <body data-session-id>")
+    up.add_argument("--incident-waiver", dest="incident_waiver", help="Explicit Phase 4 waiver reason when mid-flight incidents/failed checks do not require a Mímir Harness Delta")
     up.set_defaults(func=cmd_update_phase)
 
     lg = sub.add_parser("log", help="Append a progress entry to a phase's iteration card (no status change, no notification)")
@@ -6087,6 +6110,7 @@ def build_parser() -> argparse.ArgumentParser:
     env.add_argument("--worktree")
     env.add_argument("--app-port")
     env.add_argument("--backend-port")
+    env.add_argument("--session-id", dest="session_id", help="Session ID to stamp on <body data-session-id>")
     env.add_argument("--reason", help="Why the environment changed")
     env.set_defaults(func=cmd_set_env)
 
