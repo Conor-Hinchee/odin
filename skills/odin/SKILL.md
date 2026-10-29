@@ -96,9 +96,9 @@ The dashboard then shows **🟢 PARTNER TURN**. When the human clicks Save & Lau
 ```mermaid
 graph TD
     A["User Prompt"] --> B["Phase 1: Huginn (Blueprint)"]
-    B -->|Open Questions| Q["❓ Awaiting Human"]
-    Q -->|Answered| C["Phase 2: Thor & Valkyries (Execution)"]
-    B -->|No ambiguity| C
+    B -->|Plan review + open questions| Q["❓ Awaiting Human"]
+    Q -->|Approved| C["Phase 2: Thor & Valkyries (Execution)"]
+    B -.->|User waived review in prompt| C
     C --> D["Phase 3: Heimdall (Verification & Pre-PR Gate)"]
     D -->|DONE| E["Phase 4: Hlidskjalf (Retrospective & Harness Deltas)"]
     D -->|REJECT| C
@@ -118,7 +118,7 @@ graph TD
   4. **Definition of Done**: an unambiguous checklist.
   5. **Parallelism**: whether parts can run as parallel Valkyries, with a disjoint file-ownership matrix if so.
 - **Plan changes after approval** are logged on Huginn as they happen (`log --phase huginn --kind plan-change`), so the plan on the page never silently diverges from what was built.
-- **Blueprint review.** The human can co-edit the plan inline in the state file, attach `/skill` pills, and click **⚡ Save Edits & Launch Phase 2** (`approve_huginn`) or **🪶 Ask Huginn to Revise** (`revise_huginn`). For a non-trivial plan, or whenever there are open questions, pause at `awaiting_human` (ground rule 7) and arm the watcher. On `approve_huginn`, re-read `#huginn-plan` from disk first, because the human may have edited it.
+- **Blueprint review.** The human can co-edit the plan inline in the state file, attach `/skill` pills, and click **⚡ Save Edits & Launch Phase 2** (`approve_huginn`) or **🪶 Ask Huginn to Revise** (`revise_huginn`). Always pause at `awaiting_human` for plan review before Phase 2 (ground rule 7) and arm the watcher. Skip the pause only when the user explicitly waives plan review in their prompt. How small the plan looks is never a reason to skip it, and deleting content, files or data never counts as trivial. On `approve_huginn`, re-read `#huginn-plan` from disk first, because the human may have edited it.
 
 ### Phase 2: Thor and the Valkyries (execute)
 - Mark `#thor-execution` active. Make the changes and run the tests inside the assigned worktree.
