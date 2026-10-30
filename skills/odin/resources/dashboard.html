@@ -2757,8 +2757,9 @@
       });
 
       // Staging (:8789) & Watcher Pause Controls
+      const isStagingView = location.port === "8789" || location.hostname.startsWith("staging.");
       const stagingBanner = document.getElementById("staging-mode-banner");
-      if (location.port === "8789") {
+      if (isStagingView) {
         if (stagingBanner) stagingBanner.style.display = "flex";
         document.title = "🧪 [STAGING :8789] " + document.title.replace(/^🧪 \[STAGING :8789\]\s*/, "");
         const brandTitle = document.querySelector(".brand-title");
@@ -2821,7 +2822,7 @@
           if (data.debugPrompt && navigator.clipboard) {
             try { await navigator.clipboard.writeText(data.debugPrompt); } catch {}
           }
-          if (location.port === "8789") {
+          if (isStagingView) {
             notifyUser("🔄 Staging Re-Snapshotted from Live (:8788)", "Reset staging/odin-8789 to main and refreshed odin-states/.", "done");
             setTimeout(() => location.reload(), 650);
           } else {
@@ -2859,7 +2860,7 @@
           if (pauseBtn) pauseBtn.textContent = "⏸️ Pause Watchers";
           stagingDialog?.close();
           notifyUser("🚀 Staging Promoted to Live (:8788)", "Merged staging/odin-8789 into main, restarted :8788 & :8789, and resumed watchers.", "done");
-          if (location.port === "8789") {
+          if (isStagingView) {
             setTimeout(() => { location.href = "http://127.0.0.1:8788/"; }, 650);
           } else {
             setTimeout(() => fetchProjects(true), 700);

@@ -37,6 +37,7 @@ import odin_transcript  # noqa: E402
 
 CONFIG = load_config()
 PORT = CONFIG["ports"]["live"]
+LIVE_PORT = CONFIG["ports"]["live"]
 STAGING_PORT = CONFIG["ports"]["staging"]
 ROOT_DIR = CONFIG["root"]
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1316,8 +1317,16 @@ def _host_name(host_header: str) -> str:
     return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
 
 
+def _host_has_port(host_header: str) -> bool:
+    """True when the Host header includes an explicit port suffix."""
+    host = (host_header or "").strip()
+    if host.startswith("["):
+        return "]:" in host
+    return host.count(":") == 1
+
+
 def host_allowed(host_header: str) -> bool:
-    """DNS-rebinding guard: accept IP literals, localhost, *.local, this machine and configured names."""
+    """DNS-rebinding guard: accept IP literals, localhost, *.local, *.localhost, this machine and configured names."""
     if not host_header:
         return True
     name = _host_name(host_header)
@@ -1329,7 +1338,7 @@ def host_allowed(host_header: str) -> bool:
     machine = socket.gethostname().lower()
     allowed = {"localhost", machine, machine.split(".")[0]}
     allowed.update(h.lower() for h in CONFIG["server"].get("allowed_hosts") or [])
-    return name in allowed or name.endswith(".local")
+    return name in allowed or name.endswith(".local") or name.endswith(".localhost")
 
 
 def origin_allowed(origin: str | None, host_header: str) -> bool:
@@ -1339,16 +1348,35 @@ def origin_allowed(origin: str | None, host_header: str) -> bool:
     return urllib.parse.urlparse(origin).netloc.lower() == (host_header or "").strip().lower()
 
 
-def localize_links(text: str, host_header: str) -> str:
+def localize_links(text: str, host_header: str, forwarded_proto: str | None = None) -> str:
     """Point absolute 127.0.0.1 links to this server (live or staging port) at the host the viewer used."""
     name = _host_name(host_header)
     if not name:
         return text
     host = f"[{name}]" if ":" in name else name
-    scheme = "https" if tls_enabled(CONFIG) else "http"
+    proto = (forwarded_proto or "").split(",")[0].strip().lower()
+    scheme = proto if proto in ("http", "https") else ("https" if tls_enabled(CONFIG) else "http")
+    has_port = _host_has_port(host_header)
+
+    def _repl(m: re.Match) -> str:
+        target_port = int(m.group(1))
+        if not has_port:
+            if target_port == PORT:
+                return f"{scheme}://{host}"
+            if target_port == STAGING_PORT and not host.startswith("staging."):
+                staging_host = f"staging.{host}"
+                if host_allowed(staging_host):
+                    return f"{scheme}://{staging_host}"
+            if target_port == LIVE_PORT and host.startswith("staging."):
+                live_host = host[len("staging.") :]
+                if host_allowed(live_host):
+                    return f"{scheme}://{live_host}"
+        return f"{scheme}://{host}:{target_port}"
+
+    ports_pattern = "|".join(sorted({str(LIVE_PORT), str(PORT), str(STAGING_PORT)}))
     return re.sub(
-        rf"https?://127\.0\.0\.1:({PORT}|{STAGING_PORT})\b",
-        lambda m: f"{scheme}://{host}:{m.group(1)}",
+        rf"https?://127\.0\.0\.1:({ports_pattern})\b",
+        _repl,
         text,
     )
 
@@ -1375,7 +1403,11 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         return True
 
     def send_json(self, payload: dict, status: int = 200):
-        raw = localize_links(json.dumps(payload), self.headers.get("Host", "")).encode("utf-8")
+        raw = localize_links(
+            json.dumps(payload),
+            self.headers.get("Host", ""),
+            self.headers.get("X-Forwarded-Proto"),
+        ).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
@@ -1477,7 +1509,11 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             target_dashboard = DASHBOARD_HTML_PATH if os.path.isfile(DASHBOARD_HTML_PATH) else workspace_index
             if os.path.isfile(target_dashboard):
                 with open(target_dashboard, "r", encoding="utf-8") as f:
-                    data = localize_links(render_ports(f.read(), CONFIG), self.headers.get("Host", "")).encode("utf-8")
+                    data = localize_links(
+                        render_ports(f.read(), CONFIG),
+                        self.headers.get("Host", ""),
+                        self.headers.get("X-Forwarded-Proto"),
+                    ).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(data)))
@@ -1520,7 +1556,11 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                         html_text,
                         flags=re.IGNORECASE,
                     )
-                    raw_html = localize_links(html_text, self.headers.get("Host", "")).encode("utf-8")
+                    raw_html = localize_links(
+                        html_text,
+                        self.headers.get("Host", ""),
+                        self.headers.get("X-Forwarded-Proto"),
+                    ).encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.send_header("Content-Length", str(len(raw_html)))

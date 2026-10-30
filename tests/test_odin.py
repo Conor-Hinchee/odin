@@ -88,8 +88,27 @@ def load_module(name: str, path: Path):
 class TestOdin(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.odin_state = load_module("odin_state_v3", STATE_SCRIPT)
-        cls.odin_server = load_module("odin_server_v3", SERVER_SCRIPT)
+        cls._cfg_tmp = tempfile.TemporaryDirectory()
+        old_xdg = os.environ.get("XDG_CONFIG_HOME")
+        old_cfg = os.environ.get("ODIN_CONFIG")
+        os.environ["XDG_CONFIG_HOME"] = cls._cfg_tmp.name
+        os.environ["ODIN_CONFIG"] = ""
+        try:
+            cls.odin_state = load_module("odin_state_v3", STATE_SCRIPT)
+            cls.odin_server = load_module("odin_server_v3", SERVER_SCRIPT)
+        finally:
+            if old_xdg is None:
+                os.environ.pop("XDG_CONFIG_HOME", None)
+            else:
+                os.environ["XDG_CONFIG_HOME"] = old_xdg
+            if old_cfg is None:
+                os.environ.pop("ODIN_CONFIG", None)
+            else:
+                os.environ["ODIN_CONFIG"] = old_cfg
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._cfg_tmp.cleanup()
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
