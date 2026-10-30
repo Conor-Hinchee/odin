@@ -4084,6 +4084,18 @@ def generate_contextual_diff_html(
                 f'<div class="odin-diff-file-note"><strong>💡 Why This File Changed:</strong> {html_mod.escape(note_html)}</div>'
             )
 
+        total_file_lines = sum(len(h["raw_lines"]) for h in fobj["hunks"])
+        total_file_chars = sum(len(l) for h in fobj["hunks"] for l in h["raw_lines"])
+        if total_file_lines > 1500 or total_file_chars > 180000:
+            parts.append(
+                f'<div class="odin-diff-table-wrap" style="padding:0.85rem 1.1rem;color:#94a3b8;font-size:0.8rem;">'
+                f'⚡ Large file diff omitted inline (+{fobj["adds"]} / -{fobj["dels"]} across {total_file_lines:,} lines, {total_file_chars // 1024:,} KB) '
+                f'to keep Odin dashboard &amp; state file fast — use <strong>⚡ IDE</strong> or <strong>✏️ Edit File Inline</strong> above to inspect.'
+                f"</div>"
+            )
+            parts.append("</details>")
+            continue
+
         for h in fobj["hunks"]:
             scope_txt = h["scope"] or f"Lines {h['new_start']}+"
             parts.append(
@@ -4543,14 +4555,19 @@ def run_mimir_audit(scan_root: str = AI_DEV_ROOT) -> dict:
     """
     state_files = []
     if os.path.exists(scan_root):
+        base_depth = os.path.normpath(scan_root).count(os.sep)
         for root, dirs, files in os.walk(scan_root):
-            dirs[:] = [
-                d
-                for d in dirs
-                if not d.startswith(".")
-                and d not in ("node_modules", "dist", "build", "coverage", "__pycache__")
-                and not (d == "odin-staging" and os.path.basename(os.path.normpath(scan_root)) != "odin-staging")
-            ]
+            cur_depth = os.path.normpath(root).count(os.sep) - base_depth
+            if cur_depth >= 4:
+                dirs[:] = []
+            else:
+                dirs[:] = [
+                    d
+                    for d in dirs
+                    if not d.startswith(".")
+                    and d not in ("node_modules", "dist", "build", "coverage", "__pycache__", "venv", ".venv", "vendor", "target", "out")
+                    and not (d == "odin-staging" and os.path.basename(os.path.normpath(scan_root)) != "odin-staging")
+                ]
             if os.path.basename(root) == "odin-states":
                 for fname in files:
                     if fname.endswith(".html") and fname != "index.html":

@@ -37,6 +37,7 @@ import odin_transcript  # noqa: E402
 
 CONFIG = load_config()
 PORT = CONFIG["ports"]["live"]
+LIVE_PORT = CONFIG["ports"]["live"]
 STAGING_PORT = CONFIG["ports"]["staging"]
 ROOT_DIR = CONFIG["root"]
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -96,8 +97,51 @@ BADGE_HTML = {
 }
 
 _GIT_CACHE = {}
-_GIT_CACHE_TTL = 4.0
+_GIT_CACHE_TTL = 10.0
 _SESSION_CACHE = {"ts": 0.0, "map": {}}
+_LISTENERS_CACHE = {"ts": 0.0, "data": {}}
+_LISTENERS_TTL = 2.0
+_HTML_SKELETON_CACHE: dict[str, tuple[float, int, str]] = {}
+_MIMIR_AUDIT_CACHE = {"ts": 0.0, "data": None}
+_MIMIR_AUDIT_TTL = 4.0
+_PROJECTS_LOCK = threading.Lock()
+_PROJECTS_CACHE = {"ts": 0.0, "root": "", "data": None}
+_PROJECTS_TTL = 1.5
+
+
+def _strip_diff_tables_fast(raw: str) -> str:
+    """Fast O(N) removal of <table class="odin-diff-...">...</table> blocks without regex backtracking."""
+    marker = '<table class="odin-diff-'
+    if marker not in raw:
+        return raw
+    parts = raw.split(marker)
+    out = [parts[0]]
+    for chunk in parts[1:]:
+        end_idx = chunk.find("</table>")
+        if end_idx != -1:
+            out.append(chunk[end_idx + 8 :])
+        else:
+            out.append(marker + chunk)
+    return "".join(out)
+
+
+def _read_state_skeleton(filepath: str) -> str:
+    """Read a state HTML file, stripping inline diff tables in O(N) time and caching by (mtime, size)."""
+    try:
+        st = os.stat(filepath)
+    except OSError:
+        return ""
+    cached = _HTML_SKELETON_CACHE.get(filepath)
+    if cached and cached[0] == st.st_mtime and cached[1] == st.st_size:
+        return cached[2]
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            raw = f.read()
+    except OSError:
+        return ""
+    skeleton = _strip_diff_tables_fast(raw)
+    _HTML_SKELETON_CACHE[filepath] = (st.st_mtime, st.st_size, skeleton)
+    return skeleton
 
 _TELEMETRY_TTL = 60.0
 _TELEMETRY_LOCK = threading.Lock()
@@ -276,8 +320,11 @@ def run_cmd(cmd: list, cwd: str = None, timeout: int = 8) -> tuple[int, str, str
         return 1, "", str(exc)
 
 
-def get_listening_ports() -> dict[int, dict]:
+def get_listening_ports(force: bool = False) -> dict[int, dict]:
     """Return mapping of listening TCP port -> {pid, command}."""
+    now = time.time()
+    if not force and _LISTENERS_CACHE["data"] and (now - _LISTENERS_CACHE["ts"]) < _LISTENERS_TTL:
+        return _LISTENERS_CACHE["data"]
     code, out, _ = run_cmd(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"], timeout=4)
     listeners = {}
     if code != 0 or not out:
@@ -296,6 +343,8 @@ def get_listening_ports() -> dict[int, dict]:
         if m:
             p = int(m.group(1))
             listeners[p] = {"pid": p and pid, "command": cmd_name}
+    _LISTENERS_CACHE["ts"] = now
+    _LISTENERS_CACHE["data"] = listeners
     return listeners
 
 
@@ -322,11 +371,7 @@ def get_session_telemetry(
     slug = fname[:-5] if fname.endswith(".html") else fname
     states_dir = os.path.dirname(filepath)
     if content is None and os.path.isfile(filepath):
-        try:
-            with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-                content = f.read()
-        except OSError:
-            content = ""
+        content = _read_state_skeleton(filepath)
     content = content or ""
 
     # 1. Check .odin-paused.json
@@ -461,8 +506,10 @@ def get_cached_git_info(repo_path: str) -> dict:
     if cached and (now - cached["ts"]) < _GIT_CACHE_TTL:
         return cached["data"]
 
-    code_b, branch, _ = run_cmd(["git", "branch", "--show-current"], cwd=repo_path, timeout=3)
-    branch_str = branch.strip() if code_b == 0 and branch.strip() else read_git_head_branch(repo_path)
+    branch_str = read_git_head_branch(repo_path)
+    if not branch_str:
+        code_b, branch, _ = run_cmd(["git", "branch", "--show-current"], cwd=repo_path, timeout=3)
+        branch_str = branch.strip() if code_b == 0 else ""
     code_p, porcelain, _ = run_cmd(["git", "status", "--porcelain"], cwd=repo_path, timeout=3)
     dirty_lines = [ln for ln in porcelain.splitlines() if ln.strip()] if code_p == 0 else []
     data = {
@@ -534,7 +581,7 @@ def extract_section_info(content: str, section_id: str) -> dict:
         body_only,
         flags=re.IGNORECASE,
     )
-    target_snippet = iter_cards[-1] if iter_cards else body_only
+    target_snippet = (iter_cards[-1] if iter_cards else body_only)[:8192]
     summary = latest_note if (section_id == "human-validation" and latest_note) else strip_tags(target_snippet)
     if len(summary) > 140:
         summary = summary[:137] + "..."
@@ -674,10 +721,8 @@ def extract_iteration_ledger_summary(content: str) -> dict:
 
 
 def parse_project_file(filepath: str, listeners: dict[int, dict]) -> dict:
-    try:
-        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read()
-    except OSError:
+    content = _read_state_skeleton(filepath)
+    if not content:
         return {}
 
     rel_path = os.path.relpath(filepath, ROOT_DIR)
@@ -789,7 +834,6 @@ def parse_project_file(filepath: str, listeners: dict[int, dict]) -> dict:
     env = extract_body_env(content, filepath, workspace)
     app_port = env["appPort"]
     backend_port = env["backendPort"]
-    ledger_info = extract_iteration_ledger_summary(content)
 
     mtime_iso = datetime.datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
     is_v2 = ("bifrost-stepper" in content and "odin-favicon" in content) or ledger_info["hasLedger"]
@@ -868,58 +912,71 @@ def _project_sort_priority(p: dict) -> int:
     return 1
 
 
-def discover_projects() -> list:
-    listeners = get_listening_ports()
-    patterns = [
-        os.path.join(ROOT_DIR, "odin-states", "*.html"),
-        os.path.join(ROOT_DIR, "odin-states", "archive", "*.html"),
-        os.path.join(ROOT_DIR, "*", "odin-states", "*.html"),
-        os.path.join(ROOT_DIR, "*", "odin-states", "archive", "*.html"),
-        os.path.join(ROOT_DIR, "*", "*", "odin-states", "*.html"),
-        os.path.join(ROOT_DIR, "*", "*", "odin-states", "archive", "*.html"),
-        os.path.join(ROOT_DIR, "*", "*", "*", "odin-states", "*.html"),
-        os.path.join(ROOT_DIR, "*", "*", "*", "odin-states", "archive", "*.html"),
-    ]
-    seen = set()
-    projects = []
-    for pat in patterns:
-        for path in glob.glob(pat):
-            real = os.path.realpath(path)
-            if real in seen:
-                continue
-            if os.path.basename(path).lower() == "index.html":
-                continue
-            if not ROOT_DIR.rstrip("/").endswith("odin-staging") and "/odin-staging/" in path.replace("\\", "/"):
-                continue
-            seen.add(real)
-            info = parse_project_file(path, listeners)
-            if info:
-                projects.append(info)
+def discover_projects(force: bool = False) -> list:
+    with _PROJECTS_LOCK:
+        now = time.time()
+        if (
+            not force
+            and _PROJECTS_CACHE["data"] is not None
+            and _PROJECTS_CACHE["root"] == ROOT_DIR
+            and (now - _PROJECTS_CACHE["ts"]) < _PROJECTS_TTL
+        ):
+            return list(_PROJECTS_CACHE["data"])
 
-    # Detect port or worktree collisions across active (unarchived, non-done) projects
-    in_flight = [
-        p
-        for p in projects
-        if not p["archived"] and p["overallStatus"] in ("active", "awaiting_human", "reject", "pending")
-    ]
-    for i, p1 in enumerate(in_flight):
-        warnings = []
-        for j, p2 in enumerate(in_flight):
-            if i == j:
-                continue
-            if p1["appPort"] and p1["appPort"] == p2["appPort"]:
-                warnings.append(f"Port :{p1['appPort']} also claimed by {p2['slug']}")
-            if p1["worktree"] and p1["worktree"] == p2["worktree"] and p1["branch"] and p2["branch"] and p1["branch"] != p2["branch"]:
-                warnings.append(f"Worktree {p1['worktreeShort']} shared with {p2['slug']} ({p2['branch']})")
-        if warnings:
-            p1["collisionWarning"] = " • ".join(warnings)
+        listeners = get_listening_ports()
+        patterns = [
+            os.path.join(ROOT_DIR, "odin-states", "*.html"),
+            os.path.join(ROOT_DIR, "odin-states", "archive", "*.html"),
+            os.path.join(ROOT_DIR, "*", "odin-states", "*.html"),
+            os.path.join(ROOT_DIR, "*", "odin-states", "archive", "*.html"),
+            os.path.join(ROOT_DIR, "*", "*", "odin-states", "*.html"),
+            os.path.join(ROOT_DIR, "*", "*", "odin-states", "archive", "*.html"),
+            os.path.join(ROOT_DIR, "*", "*", "*", "odin-states", "*.html"),
+            os.path.join(ROOT_DIR, "*", "*", "*", "odin-states", "archive", "*.html"),
+        ]
+        seen = set()
+        projects = []
+        for pat in patterns:
+            for path in glob.glob(pat):
+                real = os.path.realpath(path)
+                if real in seen:
+                    continue
+                if os.path.basename(path).lower() == "index.html":
+                    continue
+                if not ROOT_DIR.rstrip("/").endswith("odin-staging") and "/odin-staging/" in path.replace("\\", "/"):
+                    continue
+                seen.add(real)
+                info = parse_project_file(path, listeners)
+                if info:
+                    projects.append(info)
 
-    for p in projects:
-        p["sortPriority"] = _project_sort_priority(p)
-        p["isOpen"] = p["sortPriority"] < 3
+        # Detect port or worktree collisions across active (unarchived, non-done) projects
+        in_flight = [
+            p
+            for p in projects
+            if not p["archived"] and p["overallStatus"] in ("active", "awaiting_human", "reject", "pending")
+        ]
+        for i, p1 in enumerate(in_flight):
+            warnings = []
+            for j, p2 in enumerate(in_flight):
+                if i == j:
+                    continue
+                if p1["appPort"] and p1["appPort"] == p2["appPort"]:
+                    warnings.append(f"Port :{p1['appPort']} also claimed by {p2['slug']}")
+                if p1["worktree"] and p1["worktree"] == p2["worktree"] and p1["branch"] and p2["branch"] and p1["branch"] != p2["branch"]:
+                    warnings.append(f"Worktree {p1['worktreeShort']} shared with {p2['slug']} ({p2['branch']})")
+            if warnings:
+                p1["collisionWarning"] = " • ".join(warnings)
 
-    projects.sort(key=lambda p: (p["sortPriority"], -float(p.get("mtime") or 0.0)))
-    return projects
+        for p in projects:
+            p["sortPriority"] = _project_sort_priority(p)
+            p["isOpen"] = p["sortPriority"] < 3
+
+        projects.sort(key=lambda p: (p["sortPriority"], -float(p.get("mtime") or 0.0)))
+        _PROJECTS_CACHE["ts"] = time.time()
+        _PROJECTS_CACHE["root"] = ROOT_DIR
+        _PROJECTS_CACHE["data"] = projects
+        return list(projects)
 
 
 def set_body_env_attributes(content: str, branch: str, worktree: str, app_port: str, backend_port: str) -> str:
@@ -1145,18 +1202,27 @@ def _get_odin_state_module():
     return _ODIN_STATE_MOD
 
 
-def get_mimir_audit_payload() -> dict:
+def get_mimir_audit_payload(force: bool = False) -> dict:
+    now = time.time()
+    if not force and _MIMIR_AUDIT_CACHE["data"] is not None and (now - _MIMIR_AUDIT_CACHE["ts"]) < _MIMIR_AUDIT_TTL:
+        return _MIMIR_AUDIT_CACHE["data"]
     mod = _get_odin_state_module()
     if mod and hasattr(mod, "run_mimir_audit"):
         try:
-            return mod.run_mimir_audit(ROOT_DIR)
+            res = mod.run_mimir_audit(ROOT_DIR)
+            _MIMIR_AUDIT_CACHE["ts"] = now
+            _MIMIR_AUDIT_CACHE["data"] = res
+            return res
         except Exception:
             pass
     state_script = os.path.join(SKILL_DIR, "scripts", "odin-state.py")
     code, out, err = run_cmd(["python3", state_script, "mimir-audit", "--dir", ROOT_DIR, "--format", "json"])
     if code == 0 and out:
         try:
-            return json.loads(out)
+            res = json.loads(out)
+            _MIMIR_AUDIT_CACHE["ts"] = now
+            _MIMIR_AUDIT_CACHE["data"] = res
+            return res
         except Exception:
             pass
     empty_mimir = {"total_deltas": 0, "pending_deltas": 0, "pending_proposals": 0, "applied_deltas": 0, "proposals": []}
@@ -1316,8 +1382,16 @@ def _host_name(host_header: str) -> str:
     return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
 
 
+def _host_has_port(host_header: str) -> bool:
+    """True when the Host header includes an explicit port suffix."""
+    host = (host_header or "").strip()
+    if host.startswith("["):
+        return "]:" in host
+    return host.count(":") == 1
+
+
 def host_allowed(host_header: str) -> bool:
-    """DNS-rebinding guard: accept IP literals, localhost, *.local, this machine and configured names."""
+    """DNS-rebinding guard: accept IP literals, localhost, *.local, *.localhost, this machine and configured names."""
     if not host_header:
         return True
     name = _host_name(host_header)
@@ -1329,7 +1403,7 @@ def host_allowed(host_header: str) -> bool:
     machine = socket.gethostname().lower()
     allowed = {"localhost", machine, machine.split(".")[0]}
     allowed.update(h.lower() for h in CONFIG["server"].get("allowed_hosts") or [])
-    return name in allowed or name.endswith(".local")
+    return name in allowed or name.endswith(".local") or name.endswith(".localhost")
 
 
 def origin_allowed(origin: str | None, host_header: str) -> bool:
@@ -1339,16 +1413,35 @@ def origin_allowed(origin: str | None, host_header: str) -> bool:
     return urllib.parse.urlparse(origin).netloc.lower() == (host_header or "").strip().lower()
 
 
-def localize_links(text: str, host_header: str) -> str:
+def localize_links(text: str, host_header: str, forwarded_proto: str | None = None) -> str:
     """Point absolute 127.0.0.1 links to this server (live or staging port) at the host the viewer used."""
     name = _host_name(host_header)
     if not name:
         return text
     host = f"[{name}]" if ":" in name else name
-    scheme = "https" if tls_enabled(CONFIG) else "http"
+    proto = (forwarded_proto or "").split(",")[0].strip().lower()
+    scheme = proto if proto in ("http", "https") else ("https" if tls_enabled(CONFIG) else "http")
+    has_port = _host_has_port(host_header)
+
+    def _repl(m: re.Match) -> str:
+        target_port = int(m.group(1))
+        if not has_port:
+            if target_port == PORT:
+                return f"{scheme}://{host}"
+            if target_port == STAGING_PORT and not host.startswith("staging."):
+                staging_host = f"staging.{host}"
+                if host_allowed(staging_host):
+                    return f"{scheme}://{staging_host}"
+            if target_port == LIVE_PORT and host.startswith("staging."):
+                live_host = host[len("staging.") :]
+                if host_allowed(live_host):
+                    return f"{scheme}://{live_host}"
+        return f"{scheme}://{host}:{target_port}"
+
+    ports_pattern = "|".join(sorted({str(LIVE_PORT), str(PORT), str(STAGING_PORT)}))
     return re.sub(
-        rf"https?://127\.0\.0\.1:({PORT}|{STAGING_PORT})\b",
-        lambda m: f"{scheme}://{host}:{m.group(1)}",
+        rf"https?://127\.0\.0\.1:({ports_pattern})\b",
+        _repl,
         text,
     )
 
@@ -1371,11 +1464,21 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         host = self.headers.get("Host", "")
         if host_allowed(host) and (not check_origin or origin_allowed(self.headers.get("Origin"), host)):
             return False
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            if 0 < length <= 65536:
+                self.rfile.read(length)
+        except Exception:
+            pass
         self.send_json({"ok": False, "error": "Forbidden host or origin"}, status=403)
         return True
 
     def send_json(self, payload: dict, status: int = 200):
-        raw = localize_links(json.dumps(payload), self.headers.get("Host", "")).encode("utf-8")
+        raw = localize_links(
+            json.dumps(payload),
+            self.headers.get("Host", ""),
+            self.headers.get("X-Forwarded-Proto"),
+        ).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
@@ -1477,7 +1580,11 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             target_dashboard = DASHBOARD_HTML_PATH if os.path.isfile(DASHBOARD_HTML_PATH) else workspace_index
             if os.path.isfile(target_dashboard):
                 with open(target_dashboard, "r", encoding="utf-8") as f:
-                    data = localize_links(render_ports(f.read(), CONFIG), self.headers.get("Host", "")).encode("utf-8")
+                    data = localize_links(
+                        render_ports(f.read(), CONFIG),
+                        self.headers.get("Host", ""),
+                        self.headers.get("X-Forwarded-Proto"),
+                    ).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(data)))
@@ -1520,7 +1627,11 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                         html_text,
                         flags=re.IGNORECASE,
                     )
-                    raw_html = localize_links(html_text, self.headers.get("Host", "")).encode("utf-8")
+                    raw_html = localize_links(
+                        html_text,
+                        self.headers.get("Host", ""),
+                        self.headers.get("X-Forwarded-Proto"),
+                    ).encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.send_header("Content-Length", str(len(raw_html)))
@@ -1547,6 +1658,7 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         if parsed.path not in ("/api/projects/action", "/api/mimir/apply"):
             return self.send_json({"ok": False, "error": "Unknown endpoint"}, status=404)
 
+        _PROJECTS_CACHE["ts"] = 0.0
         try:
             length = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
@@ -1567,7 +1679,7 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                     scan_root=ROOT_DIR,
                     parent_file=parent_file,
                 )
-                audit_payload = get_mimir_audit_payload()
+                audit_payload = get_mimir_audit_payload(force=True)
                 res["audit"] = audit_payload
                 res["mimirAudit"] = audit_payload
                 res["projects"] = discover_projects()
@@ -1623,12 +1735,12 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                                 fw.write(c)
                     except Exception:
                         pass
-                audit_payload = get_mimir_audit_payload()
+                audit_payload = get_mimir_audit_payload(force=True)
                 return self.send_json({
                     "ok": True,
                     "audit": audit_payload,
                     "mimirAudit": audit_payload,
-                    "projects": discover_projects(),
+                    "projects": discover_projects(force=True),
                 })
 
             if action == "refresh_telemetry":
@@ -1665,12 +1777,12 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
             if action == "archive_all_done":
                 moved = []
-                for proj in discover_projects():
+                for proj in discover_projects(force=True):
                     if not proj["archived"] and proj["overallStatus"] == "done":
                         fp = resolve_safe_project_path(proj["id"])
                         new_fp = archive_or_restore_file(fp, True)
                         moved.append(os.path.relpath(new_fp, ROOT_DIR))
-                return self.send_json({"ok": True, "moved": moved, "projects": discover_projects()})
+                return self.send_json({"ok": True, "moved": moved, "projects": discover_projects(force=True)})
 
             if action == "toggle_pause":
                 mod = _get_odin_state_module()

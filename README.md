@@ -66,6 +66,67 @@ With a cert configured, the server speaks HTTPS on every interface, local `https
 
 **There is no authentication.** Anyone who can reach the port can read and write files in your repositories and approve, reject or wake the agent. Only bind to `0.0.0.0` on a network you trust. The server does refuse requests whose `Host` is an unknown domain name (DNS rebinding) and POSTs from other websites (CSRF); add extra hostnames you use, such as a router-assigned name, to `server.allowed_hosts`.
 
+### Custom local domain (`odin.dev`)
+
+Because browsers enforce HSTS (`https://` on port `443`) on `.dev` domains, serving `https://odin.dev/` and `https://staging.odin.dev/` without `:8788` requires `/etc/hosts`, a local `mkcert` certificate, and an `nginx` reverse proxy forwarding `Host` and `X-Forwarded-Proto`:
+
+1. **Map `/etc/hosts`:**
+   ```bash
+   echo "127.0.0.1 odin.dev staging.odin.dev" | sudo tee -a /etc/hosts && sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder
+   ```
+2. **Generate a local certificate (`mkcert`):**
+   ```bash
+   mkdir -p ~/certs
+   mkcert -cert-file ~/certs/odin.dev.crt -key-file ~/certs/odin.dev.key odin.dev staging.odin.dev odin.local staging.odin.local odin.localhost staging.odin.localhost
+   ```
+3. **Add an `nginx` virtual host (`/opt/homebrew/etc/nginx/servers/odin.conf`):**
+   ```nginx
+   server {
+       listen 80;
+       server_name odin.dev staging.odin.dev odin.local staging.odin.local odin.localhost staging.odin.localhost;
+       return 301 https://$host$request_uri;
+   }
+
+   server {
+       listen 443 ssl;
+       server_name odin.dev odin.local odin.localhost;
+       ssl_certificate     /Users/<you>/certs/odin.dev.crt;
+       ssl_certificate_key /Users/<you>/certs/odin.dev.key;
+
+       location / {
+           proxy_pass http://127.0.0.1:8788;
+           proxy_http_version 1.1;
+           proxy_set_header Host $http_host;
+           proxy_set_header X-Forwarded-Host $http_host;
+           proxy_set_header X-Forwarded-Proto $scheme;
+           proxy_set_header X-Real-IP $remote_addr;
+       }
+   }
+
+   server {
+       listen 443 ssl;
+       server_name staging.odin.dev staging.odin.local staging.odin.localhost;
+       ssl_certificate     /Users/<you>/certs/odin.dev.crt;
+       ssl_certificate_key /Users/<you>/certs/odin.dev.key;
+
+       location / {
+           proxy_pass http://127.0.0.1:8789;
+           proxy_http_version 1.1;
+           proxy_set_header Host $http_host;
+           proxy_set_header X-Forwarded-Host $http_host;
+           proxy_set_header X-Forwarded-Proto $scheme;
+           proxy_set_header X-Real-IP $remote_addr;
+       }
+   }
+   ```
+4. **Allow the hostnames in `~/.config/odin/config.json`:**
+   ```json
+   "server": {
+     "allowed_hosts": ["odin.dev", "staging.odin.dev", "odin.local", "staging.odin.local", "odin.localhost", "staging.odin.localhost"]
+   }
+   ```
+   `odin-server.py` honors `X-Forwarded-Proto` for CSRF `Origin` checks and link rewriting, and the dashboard switches between `odin.dev` and `staging.odin.dev` automatically.
+
 ### Progress timeline
 
 Each phase card has a timeline of what happened while the phase ran. The plugin's progress hook fills it in automatically: every `git commit`, every test, lint, typecheck or build command (with ✅/❌), and every subagent dispatch and return. Claude adds findings, decisions, plan changes and incidents with `odin-state.py log`. Status changes are logged there too, and they're the only updates that chime. To turn the hook off, set `"progress": {"capture": false}` in your config.
@@ -88,6 +149,7 @@ python3 skills/odin/scripts/odin_config.py
 |---|---|
 | `root` | Folder the dashboard scans (three levels deep) for `odin-states/` |
 | `ports` | `live` (8788) and `staging` (8789) |
+| `server` | `host` interface, optional TLS `cert`/`key`, and `allowed_hosts` for custom domains or reverse proxies |
 | `repos` | Repos `odin-isolate.py` may allocate worktrees and ports for |
 | `telemetry` | A command that prints a JSON array, shown as a table on the dashboard |
 | `skill_pills` | Skills offered as one-click pills when approving a plan |

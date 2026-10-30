@@ -249,6 +249,29 @@ class TestPrHook(unittest.TestCase):
         self.assertIn("Claude Code (claude-opus-5-5)", new_cmd)
         self.assertIn("Verbatim Session Prompts (1)", new_cmd)
 
+    def test_commit_heredoc_unwrapped_when_chained_segment_rebuilds(self):
+        self.hook.configure({"label": "ai-generated"})
+        heredoc = "\"$(cat <<'EOF'\nfix: thing\n\nCo-Authored-By: X\nEOF\n)\""
+        cmd = (
+            f"git commit -m {heredoc} && "
+            'gh pr create --title t --body "## Summary\n- x\n\n### Prompt Summary\n- fix it"'
+        )
+        out = self.hook.handle_pre_tool_use(self.payload(cmd))
+        new_cmd = out["hookSpecificOutput"]["updatedInput"]["command"]
+        self.assertNotIn("cat <<", new_cmd)
+        self.assertIn("git commit -m 'fix: thing\n\nCo-Authored-By: X'", new_cmd)
+
+        sub = "$(cat <<'EOF'\nbody\nEOF\n)"
+        for msg_tokens in (["-m", sub], [f"--message={sub}"], [f"-m{sub}"]):
+            tokens, _ = self.hook.process_git_commit_tokens(["git", "commit", "-m", "Rule #12", *msg_tokens])
+            self.assertNotIn("cat <<", " ".join(tokens), msg_tokens)
+            self.assertIn("body", tokens[-1])
+
+    def test_commit_heredoc_alone_is_noop(self):
+        self.hook.configure({"label": "ai-generated"})
+        cmd = "git commit -m \"$(cat <<'EOF'\nfix: thing\nEOF\n)\""
+        self.assertIsNone(self.hook.handle_pre_tool_use(self.payload(cmd)))
+
     def test_cli_fast_path_and_output(self):
         script = str(SCRIPTS / "odin-pr-hook.py")
         res = subprocess.run(
@@ -279,6 +302,24 @@ class TestPrHook(unittest.TestCase):
         self.assertIn("agy-conv-123", new_cmd)
         self.assertIn("## 🤖 Gemini Session Telemetry", new_cmd)
 
+        # Heredoc subshell --body "$(cat <<'EOF'\n...\nEOF\n)" is unwrapped before shlex.quote
+        heredoc_payload = {
+            "conversationId": "agy-conv-123",
+            "transcriptPath": str(self.transcript),
+            "modelName": "Claude Opus 4.6 (Thinking)",
+            "toolCall": {
+                "name": "run_command",
+                "args": {
+                    "CommandLine": "gh pr create --title \"Fix Step #2\" --body \"$(cat <<'EOF'\n## Summary\n- x\n\n### Prompt Summary\n- fix it\nEOF\n)\""
+                },
+            },
+        }
+        out_hd = self.hook.handle_pre_tool_use(heredoc_payload)
+        hd_cmd = out_hd["overwrite"]["CommandLine"]
+        self.assertNotIn("cat <<", hd_cmd)
+        self.assertNotIn("\nEOF", hd_cmd)
+        self.assertIn("## Summary", hd_cmd)
+
         # SessionStart hook outputs JSON injectSteps for Antigravity and plain text for Claude Code
         session_script = str(SCRIPTS / "odin-session-start.py")
         res_agy = subprocess.run(
@@ -303,19 +344,30 @@ class TestPrHook(unittest.TestCase):
 class TestServerGeneric(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.server = load_module("odin_server_generic_test", "odin-server.py")
+        cls._cfg_tmp = tempfile.TemporaryDirectory()
+        with mock.patch.dict(
+            os.environ,
+            {"XDG_CONFIG_HOME": cls._cfg_tmp.name, "ODIN_CONFIG": "", "ODIN_ROOT": cls._cfg_tmp.name},
+        ):
+            cls.server = load_module("odin_server_generic_test", "odin-server.py")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._cfg_tmp.cleanup()
 
     def test_host_and_origin_guards(self):
         s = self.server
-        for ok in ("127.0.0.1:8788", "localhost:8788", "[::1]:8788", "192.168.1.20:8788", "studio.local:8788", ""):
+        for ok in ("127.0.0.1:8788", "localhost:8788", "odin.localhost:8788", "[::1]:8788", "192.168.1.20:8788", "studio.local:8788", ""):
             self.assertTrue(s.host_allowed(ok), ok)
         # DNS rebinding: an attacker's domain resolving to 127.0.0.1 is refused.
         self.assertFalse(s.host_allowed("evil.example.com:8788"))
-        with mock.patch.dict(s.CONFIG["server"], {"allowed_hosts": ["odin.home.arpa"]}):
+        with mock.patch.dict(s.CONFIG["server"], {"allowed_hosts": ["odin.home.arpa", "odin.dev", "staging.odin.dev"]}):
             self.assertTrue(s.host_allowed("odin.home.arpa:8788"))
+            self.assertTrue(s.host_allowed("odin.dev"))
 
         self.assertTrue(s.origin_allowed(None, "127.0.0.1:8788"))
         self.assertTrue(s.origin_allowed("https://192.168.1.20:8788", "192.168.1.20:8788"))
+        self.assertTrue(s.origin_allowed("https://odin.dev", "odin.dev"))
         self.assertFalse(s.origin_allowed("https://evil.example.com", "127.0.0.1:8788"))
         self.assertFalse(s.origin_allowed("null", "127.0.0.1:8788"))
 
@@ -327,6 +379,12 @@ class TestServerGeneric(unittest.TestCase):
         self.assertIn(f"http://192.168.1.20:{live}/a.html", out)
         self.assertIn(f"http://192.168.1.20:{staging}/", out)
         self.assertIn("http://127.0.0.1:3000/", out)  # dev-app ports are left alone
+        with mock.patch.dict(s.CONFIG["server"], {"allowed_hosts": ["odin.dev", "staging.odin.dev"]}):
+            rp_out = s.localize_links(text, "odin.dev", "https")
+            self.assertIn("https://odin.dev/a.html", rp_out)
+            self.assertIn("https://staging.odin.dev/", rp_out)
+            self.assertNotIn(f":{live}", rp_out)
+            self.assertIn("http://127.0.0.1:3000/", rp_out)
         with mock.patch.dict(s.CONFIG["server"], {"cert": "/c.pem", "key": "/k.pem"}):
             self.assertIn(f"https://192.168.1.20:{live}/", s.localize_links(f"http://127.0.0.1:{live}/", f"192.168.1.20:{live}"))
             self.assertEqual(odin_config.base_url(s.CONFIG, 9000), "https://127.0.0.1:9000")

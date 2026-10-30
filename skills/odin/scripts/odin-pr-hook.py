@@ -126,6 +126,20 @@ NON_ISSUE_HASH_RE = re.compile(
     re.IGNORECASE,
 )
 
+HEREDOC_SUBSHELL_RE = re.compile(
+    r"^\s*\$\(\s*cat\s+<<-?\s*['\"]?([A-Za-z0-9_]+)['\"]?\s*\r?\n([\s\S]*?)\r?\n[ \t]*\1\s*\)\s*$"
+)
+
+
+def unwrap_heredoc_subshell(text: str) -> tuple[str, bool]:
+    """Unwrap `$(cat <<'EOF'\\n...\\nEOF\\n)` before shlex.quote re-quotes the token in single quotes."""
+    if not text or "<<" not in text:
+        return text, False
+    m = HEREDOC_SUBSHELL_RE.match(text)
+    if m:
+        return m.group(2), True
+    return text, False
+
 
 def sanitize_non_issue_hash_refs(text: str) -> tuple[str, bool]:
     """Strip '#' from non-issue ordinal nouns (e.g. 'Rule #12' -> 'Rule 12').
@@ -353,19 +367,20 @@ def process_gh_command_tokens(
         t_idx += 1
 
     if body_val is not None and body_idx is not None:
-        if has_prompt_summary(body_val):
+        unwrapped_body, heredoc_unwrapped = unwrap_heredoc_subshell(body_val)
+        if has_prompt_summary(unwrapped_body):
             enriched_body, body_changed = enrich_pr_body(
-                body_val, conversation_id, prompts, transcript_path, payload
+                unwrapped_body, conversation_id, prompts, transcript_path, payload
             )
-            if body_changed:
+            if body_changed or heredoc_unwrapped:
                 if body_inline_prefix:
                     new_tokens[body_idx] = f"{body_inline_prefix}{enriched_body}"
                 else:
                     new_tokens[body_idx] = enriched_body
                 modified = True
         else:
-            san_body, b_changed = sanitize_non_issue_hash_refs(body_val)
-            if b_changed:
+            san_body, b_changed = sanitize_non_issue_hash_refs(unwrapped_body)
+            if b_changed or heredoc_unwrapped:
                 if body_inline_prefix:
                     new_tokens[body_idx] = f"{body_inline_prefix}{san_body}"
                 else:
@@ -403,26 +418,29 @@ def process_git_commit_tokens(tokens: list[str]) -> tuple[list[str], bool]:
     while i < len(new_tokens):
         tok = new_tokens[i]
         if tok in ("-m", "--message") and i + 1 < len(new_tokens):
-            san_msg, changed = sanitize_non_issue_hash_refs(new_tokens[i + 1])
-            if changed:
+            unwrapped_msg, h_unwrapped = unwrap_heredoc_subshell(new_tokens[i + 1])
+            san_msg, changed = sanitize_non_issue_hash_refs(unwrapped_msg)
+            if changed or h_unwrapped:
+                # Unwrapped heredocs only need swapping in; re-quoting happens only if something else rebuilds the command.
                 new_tokens[i + 1] = san_msg
-                modified = True
+                modified = modified or changed
             i += 2
             continue
         if tok.startswith("--message="):
             raw_msg = tok.split("=", 1)[1]
-            san_msg, changed = sanitize_non_issue_hash_refs(raw_msg)
-            if changed:
+            unwrapped_msg, h_unwrapped = unwrap_heredoc_subshell(raw_msg)
+            san_msg, changed = sanitize_non_issue_hash_refs(unwrapped_msg)
+            if changed or h_unwrapped:
                 new_tokens[i] = f"--message={san_msg}"
-                modified = True
+                modified = modified or changed
             i += 1
             continue
         if tok.startswith("-m") and len(tok) > 2 and not tok.startswith("--"):
-            raw_msg = tok[2:]
-            san_msg, changed = sanitize_non_issue_hash_refs(raw_msg)
-            if changed:
+            unwrapped_msg, h_unwrapped = unwrap_heredoc_subshell(tok[2:])
+            san_msg, changed = sanitize_non_issue_hash_refs(unwrapped_msg)
+            if changed or h_unwrapped:
                 new_tokens[i] = f"-m{san_msg}"
-                modified = True
+                modified = modified or changed
             i += 1
             continue
         i += 1
