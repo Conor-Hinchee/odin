@@ -99,6 +99,46 @@ BADGE_HTML = {
 _GIT_CACHE = {}
 _GIT_CACHE_TTL = 4.0
 _SESSION_CACHE = {"ts": 0.0, "map": {}}
+_LISTENERS_CACHE = {"ts": 0.0, "data": {}}
+_LISTENERS_TTL = 2.0
+_HTML_SKELETON_CACHE: dict[str, tuple[float, int, str]] = {}
+_MIMIR_AUDIT_CACHE = {"ts": 0.0, "data": None}
+_MIMIR_AUDIT_TTL = 4.0
+
+
+def _strip_diff_tables_fast(raw: str) -> str:
+    """Fast O(N) removal of <table class="odin-diff-...">...</table> blocks without regex backtracking."""
+    marker = '<table class="odin-diff-'
+    if marker not in raw:
+        return raw
+    parts = raw.split(marker)
+    out = [parts[0]]
+    for chunk in parts[1:]:
+        end_idx = chunk.find("</table>")
+        if end_idx != -1:
+            out.append(chunk[end_idx + 8 :])
+        else:
+            out.append(marker + chunk)
+    return "".join(out)
+
+
+def _read_state_skeleton(filepath: str) -> str:
+    """Read a state HTML file, stripping inline diff tables in O(N) time and caching by (mtime, size)."""
+    try:
+        st = os.stat(filepath)
+    except OSError:
+        return ""
+    cached = _HTML_SKELETON_CACHE.get(filepath)
+    if cached and cached[0] == st.st_mtime and cached[1] == st.st_size:
+        return cached[2]
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            raw = f.read()
+    except OSError:
+        return ""
+    skeleton = _strip_diff_tables_fast(raw)
+    _HTML_SKELETON_CACHE[filepath] = (st.st_mtime, st.st_size, skeleton)
+    return skeleton
 
 _TELEMETRY_TTL = 60.0
 _TELEMETRY_LOCK = threading.Lock()
@@ -277,8 +317,11 @@ def run_cmd(cmd: list, cwd: str = None, timeout: int = 8) -> tuple[int, str, str
         return 1, "", str(exc)
 
 
-def get_listening_ports() -> dict[int, dict]:
+def get_listening_ports(force: bool = False) -> dict[int, dict]:
     """Return mapping of listening TCP port -> {pid, command}."""
+    now = time.time()
+    if not force and _LISTENERS_CACHE["data"] and (now - _LISTENERS_CACHE["ts"]) < _LISTENERS_TTL:
+        return _LISTENERS_CACHE["data"]
     code, out, _ = run_cmd(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"], timeout=4)
     listeners = {}
     if code != 0 or not out:
@@ -297,6 +340,8 @@ def get_listening_ports() -> dict[int, dict]:
         if m:
             p = int(m.group(1))
             listeners[p] = {"pid": p and pid, "command": cmd_name}
+    _LISTENERS_CACHE["ts"] = now
+    _LISTENERS_CACHE["data"] = listeners
     return listeners
 
 
@@ -323,11 +368,7 @@ def get_session_telemetry(
     slug = fname[:-5] if fname.endswith(".html") else fname
     states_dir = os.path.dirname(filepath)
     if content is None and os.path.isfile(filepath):
-        try:
-            with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-                content = f.read()
-        except OSError:
-            content = ""
+        content = _read_state_skeleton(filepath)
     content = content or ""
 
     # 1. Check .odin-paused.json
@@ -535,7 +576,7 @@ def extract_section_info(content: str, section_id: str) -> dict:
         body_only,
         flags=re.IGNORECASE,
     )
-    target_snippet = iter_cards[-1] if iter_cards else body_only
+    target_snippet = (iter_cards[-1] if iter_cards else body_only)[:8192]
     summary = latest_note if (section_id == "human-validation" and latest_note) else strip_tags(target_snippet)
     if len(summary) > 140:
         summary = summary[:137] + "..."
@@ -675,10 +716,8 @@ def extract_iteration_ledger_summary(content: str) -> dict:
 
 
 def parse_project_file(filepath: str, listeners: dict[int, dict]) -> dict:
-    try:
-        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read()
-    except OSError:
+    content = _read_state_skeleton(filepath)
+    if not content:
         return {}
 
     rel_path = os.path.relpath(filepath, ROOT_DIR)
@@ -790,7 +829,6 @@ def parse_project_file(filepath: str, listeners: dict[int, dict]) -> dict:
     env = extract_body_env(content, filepath, workspace)
     app_port = env["appPort"]
     backend_port = env["backendPort"]
-    ledger_info = extract_iteration_ledger_summary(content)
 
     mtime_iso = datetime.datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
     is_v2 = ("bifrost-stepper" in content and "odin-favicon" in content) or ledger_info["hasLedger"]
@@ -1146,18 +1184,27 @@ def _get_odin_state_module():
     return _ODIN_STATE_MOD
 
 
-def get_mimir_audit_payload() -> dict:
+def get_mimir_audit_payload(force: bool = False) -> dict:
+    now = time.time()
+    if not force and _MIMIR_AUDIT_CACHE["data"] is not None and (now - _MIMIR_AUDIT_CACHE["ts"]) < _MIMIR_AUDIT_TTL:
+        return _MIMIR_AUDIT_CACHE["data"]
     mod = _get_odin_state_module()
     if mod and hasattr(mod, "run_mimir_audit"):
         try:
-            return mod.run_mimir_audit(ROOT_DIR)
+            res = mod.run_mimir_audit(ROOT_DIR)
+            _MIMIR_AUDIT_CACHE["ts"] = now
+            _MIMIR_AUDIT_CACHE["data"] = res
+            return res
         except Exception:
             pass
     state_script = os.path.join(SKILL_DIR, "scripts", "odin-state.py")
     code, out, err = run_cmd(["python3", state_script, "mimir-audit", "--dir", ROOT_DIR, "--format", "json"])
     if code == 0 and out:
         try:
-            return json.loads(out)
+            res = json.loads(out)
+            _MIMIR_AUDIT_CACHE["ts"] = now
+            _MIMIR_AUDIT_CACHE["data"] = res
+            return res
         except Exception:
             pass
     empty_mimir = {"total_deltas": 0, "pending_deltas": 0, "pending_proposals": 0, "applied_deltas": 0, "proposals": []}
@@ -1607,7 +1654,7 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                     scan_root=ROOT_DIR,
                     parent_file=parent_file,
                 )
-                audit_payload = get_mimir_audit_payload()
+                audit_payload = get_mimir_audit_payload(force=True)
                 res["audit"] = audit_payload
                 res["mimirAudit"] = audit_payload
                 res["projects"] = discover_projects()
@@ -1663,7 +1710,7 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                                 fw.write(c)
                     except Exception:
                         pass
-                audit_payload = get_mimir_audit_payload()
+                audit_payload = get_mimir_audit_payload(force=True)
                 return self.send_json({
                     "ok": True,
                     "audit": audit_payload,
