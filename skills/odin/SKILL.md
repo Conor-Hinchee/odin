@@ -160,6 +160,8 @@ graph TD
   ```
   `--target-path` names the file in its source repo, never an installed copy such as the plugin cache under `~/.claude/plugins/cache/`, which is overwritten on update.
 
+  Write proposals in general terms. An approved delta is committed to the repository that owns the target file, often Odin's own public repo, so describe the pattern without the task's code, names, internal URLs or secrets.
+
   Proposals stay in the state file's ledger and do not touch the feature branch. They are reviewed later through the dashboard's **🧠 Mímir Harness Audit** or `mimir-audit`, and **Approve & Spawn Delta Ticket** turns one into its own Odin task.
 - Mark done.
 
