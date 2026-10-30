@@ -420,26 +420,27 @@ def process_git_commit_tokens(tokens: list[str]) -> tuple[list[str], bool]:
         if tok in ("-m", "--message") and i + 1 < len(new_tokens):
             unwrapped_msg, h_unwrapped = unwrap_heredoc_subshell(new_tokens[i + 1])
             san_msg, changed = sanitize_non_issue_hash_refs(unwrapped_msg)
-            if changed:
+            if changed or h_unwrapped:
+                # Unwrapped heredocs only need swapping in; re-quoting happens only if something else rebuilds the command.
                 new_tokens[i + 1] = san_msg
-                modified = True
+                modified = modified or changed
             i += 2
             continue
         if tok.startswith("--message="):
             raw_msg = tok.split("=", 1)[1]
-            unwrapped_msg, _ = unwrap_heredoc_subshell(raw_msg)
+            unwrapped_msg, h_unwrapped = unwrap_heredoc_subshell(raw_msg)
             san_msg, changed = sanitize_non_issue_hash_refs(unwrapped_msg)
-            if changed:
+            if changed or h_unwrapped:
                 new_tokens[i] = f"--message={san_msg}"
-                modified = True
+                modified = modified or changed
             i += 1
             continue
         if tok.startswith("-m") and len(tok) > 2 and not tok.startswith("--"):
-            raw_msg = tok[2:]
-            san_msg, changed = sanitize_non_issue_hash_refs(raw_msg)
-            if changed:
+            unwrapped_msg, h_unwrapped = unwrap_heredoc_subshell(tok[2:])
+            san_msg, changed = sanitize_non_issue_hash_refs(unwrapped_msg)
+            if changed or h_unwrapped:
                 new_tokens[i] = f"-m{san_msg}"
-                modified = True
+                modified = modified or changed
             i += 1
             continue
         i += 1

@@ -249,6 +249,29 @@ class TestPrHook(unittest.TestCase):
         self.assertIn("Claude Code (claude-opus-5-5)", new_cmd)
         self.assertIn("Verbatim Session Prompts (1)", new_cmd)
 
+    def test_commit_heredoc_unwrapped_when_chained_segment_rebuilds(self):
+        self.hook.configure({"label": "ai-generated"})
+        heredoc = "\"$(cat <<'EOF'\nfix: thing\n\nCo-Authored-By: X\nEOF\n)\""
+        cmd = (
+            f"git commit -m {heredoc} && "
+            'gh pr create --title t --body "## Summary\n- x\n\n### Prompt Summary\n- fix it"'
+        )
+        out = self.hook.handle_pre_tool_use(self.payload(cmd))
+        new_cmd = out["hookSpecificOutput"]["updatedInput"]["command"]
+        self.assertNotIn("cat <<", new_cmd)
+        self.assertIn("git commit -m 'fix: thing\n\nCo-Authored-By: X'", new_cmd)
+
+        sub = "$(cat <<'EOF'\nbody\nEOF\n)"
+        for msg_tokens in (["-m", sub], [f"--message={sub}"], [f"-m{sub}"]):
+            tokens, _ = self.hook.process_git_commit_tokens(["git", "commit", "-m", "Rule #12", *msg_tokens])
+            self.assertNotIn("cat <<", " ".join(tokens), msg_tokens)
+            self.assertIn("body", tokens[-1])
+
+    def test_commit_heredoc_alone_is_noop(self):
+        self.hook.configure({"label": "ai-generated"})
+        cmd = "git commit -m \"$(cat <<'EOF'\nfix: thing\nEOF\n)\""
+        self.assertIsNone(self.hook.handle_pre_tool_use(self.payload(cmd)))
+
     def test_cli_fast_path_and_output(self):
         script = str(SCRIPTS / "odin-pr-hook.py")
         res = subprocess.run(
