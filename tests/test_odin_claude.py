@@ -279,6 +279,24 @@ class TestPrHook(unittest.TestCase):
         self.assertIn("agy-conv-123", new_cmd)
         self.assertIn("## 🤖 Gemini Session Telemetry", new_cmd)
 
+        # Heredoc subshell --body "$(cat <<'EOF'\n...\nEOF\n)" is unwrapped before shlex.quote
+        heredoc_payload = {
+            "conversationId": "agy-conv-123",
+            "transcriptPath": str(self.transcript),
+            "modelName": "Claude Opus 4.6 (Thinking)",
+            "toolCall": {
+                "name": "run_command",
+                "args": {
+                    "CommandLine": "gh pr create --title \"Fix Step #2\" --body \"$(cat <<'EOF'\n## Summary\n- x\n\n### Prompt Summary\n- fix it\nEOF\n)\""
+                },
+            },
+        }
+        out_hd = self.hook.handle_pre_tool_use(heredoc_payload)
+        hd_cmd = out_hd["overwrite"]["CommandLine"]
+        self.assertNotIn("cat <<", hd_cmd)
+        self.assertNotIn("\nEOF", hd_cmd)
+        self.assertIn("## Summary", hd_cmd)
+
         # SessionStart hook outputs JSON injectSteps for Antigravity and plain text for Claude Code
         session_script = str(SCRIPTS / "odin-session-start.py")
         res_agy = subprocess.run(
