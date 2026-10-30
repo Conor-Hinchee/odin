@@ -97,13 +97,16 @@ BADGE_HTML = {
 }
 
 _GIT_CACHE = {}
-_GIT_CACHE_TTL = 4.0
+_GIT_CACHE_TTL = 10.0
 _SESSION_CACHE = {"ts": 0.0, "map": {}}
 _LISTENERS_CACHE = {"ts": 0.0, "data": {}}
 _LISTENERS_TTL = 2.0
 _HTML_SKELETON_CACHE: dict[str, tuple[float, int, str]] = {}
 _MIMIR_AUDIT_CACHE = {"ts": 0.0, "data": None}
 _MIMIR_AUDIT_TTL = 4.0
+_PROJECTS_LOCK = threading.Lock()
+_PROJECTS_CACHE = {"ts": 0.0, "root": "", "data": None}
+_PROJECTS_TTL = 1.5
 
 
 def _strip_diff_tables_fast(raw: str) -> str:
@@ -503,8 +506,10 @@ def get_cached_git_info(repo_path: str) -> dict:
     if cached and (now - cached["ts"]) < _GIT_CACHE_TTL:
         return cached["data"]
 
-    code_b, branch, _ = run_cmd(["git", "branch", "--show-current"], cwd=repo_path, timeout=3)
-    branch_str = branch.strip() if code_b == 0 and branch.strip() else read_git_head_branch(repo_path)
+    branch_str = read_git_head_branch(repo_path)
+    if not branch_str:
+        code_b, branch, _ = run_cmd(["git", "branch", "--show-current"], cwd=repo_path, timeout=3)
+        branch_str = branch.strip() if code_b == 0 else ""
     code_p, porcelain, _ = run_cmd(["git", "status", "--porcelain"], cwd=repo_path, timeout=3)
     dirty_lines = [ln for ln in porcelain.splitlines() if ln.strip()] if code_p == 0 else []
     data = {
@@ -907,58 +912,71 @@ def _project_sort_priority(p: dict) -> int:
     return 1
 
 
-def discover_projects() -> list:
-    listeners = get_listening_ports()
-    patterns = [
-        os.path.join(ROOT_DIR, "odin-states", "*.html"),
-        os.path.join(ROOT_DIR, "odin-states", "archive", "*.html"),
-        os.path.join(ROOT_DIR, "*", "odin-states", "*.html"),
-        os.path.join(ROOT_DIR, "*", "odin-states", "archive", "*.html"),
-        os.path.join(ROOT_DIR, "*", "*", "odin-states", "*.html"),
-        os.path.join(ROOT_DIR, "*", "*", "odin-states", "archive", "*.html"),
-        os.path.join(ROOT_DIR, "*", "*", "*", "odin-states", "*.html"),
-        os.path.join(ROOT_DIR, "*", "*", "*", "odin-states", "archive", "*.html"),
-    ]
-    seen = set()
-    projects = []
-    for pat in patterns:
-        for path in glob.glob(pat):
-            real = os.path.realpath(path)
-            if real in seen:
-                continue
-            if os.path.basename(path).lower() == "index.html":
-                continue
-            if not ROOT_DIR.rstrip("/").endswith("odin-staging") and "/odin-staging/" in path.replace("\\", "/"):
-                continue
-            seen.add(real)
-            info = parse_project_file(path, listeners)
-            if info:
-                projects.append(info)
+def discover_projects(force: bool = False) -> list:
+    with _PROJECTS_LOCK:
+        now = time.time()
+        if (
+            not force
+            and _PROJECTS_CACHE["data"] is not None
+            and _PROJECTS_CACHE["root"] == ROOT_DIR
+            and (now - _PROJECTS_CACHE["ts"]) < _PROJECTS_TTL
+        ):
+            return list(_PROJECTS_CACHE["data"])
 
-    # Detect port or worktree collisions across active (unarchived, non-done) projects
-    in_flight = [
-        p
-        for p in projects
-        if not p["archived"] and p["overallStatus"] in ("active", "awaiting_human", "reject", "pending")
-    ]
-    for i, p1 in enumerate(in_flight):
-        warnings = []
-        for j, p2 in enumerate(in_flight):
-            if i == j:
-                continue
-            if p1["appPort"] and p1["appPort"] == p2["appPort"]:
-                warnings.append(f"Port :{p1['appPort']} also claimed by {p2['slug']}")
-            if p1["worktree"] and p1["worktree"] == p2["worktree"] and p1["branch"] and p2["branch"] and p1["branch"] != p2["branch"]:
-                warnings.append(f"Worktree {p1['worktreeShort']} shared with {p2['slug']} ({p2['branch']})")
-        if warnings:
-            p1["collisionWarning"] = " • ".join(warnings)
+        listeners = get_listening_ports()
+        patterns = [
+            os.path.join(ROOT_DIR, "odin-states", "*.html"),
+            os.path.join(ROOT_DIR, "odin-states", "archive", "*.html"),
+            os.path.join(ROOT_DIR, "*", "odin-states", "*.html"),
+            os.path.join(ROOT_DIR, "*", "odin-states", "archive", "*.html"),
+            os.path.join(ROOT_DIR, "*", "*", "odin-states", "*.html"),
+            os.path.join(ROOT_DIR, "*", "*", "odin-states", "archive", "*.html"),
+            os.path.join(ROOT_DIR, "*", "*", "*", "odin-states", "*.html"),
+            os.path.join(ROOT_DIR, "*", "*", "*", "odin-states", "archive", "*.html"),
+        ]
+        seen = set()
+        projects = []
+        for pat in patterns:
+            for path in glob.glob(pat):
+                real = os.path.realpath(path)
+                if real in seen:
+                    continue
+                if os.path.basename(path).lower() == "index.html":
+                    continue
+                if not ROOT_DIR.rstrip("/").endswith("odin-staging") and "/odin-staging/" in path.replace("\\", "/"):
+                    continue
+                seen.add(real)
+                info = parse_project_file(path, listeners)
+                if info:
+                    projects.append(info)
 
-    for p in projects:
-        p["sortPriority"] = _project_sort_priority(p)
-        p["isOpen"] = p["sortPriority"] < 3
+        # Detect port or worktree collisions across active (unarchived, non-done) projects
+        in_flight = [
+            p
+            for p in projects
+            if not p["archived"] and p["overallStatus"] in ("active", "awaiting_human", "reject", "pending")
+        ]
+        for i, p1 in enumerate(in_flight):
+            warnings = []
+            for j, p2 in enumerate(in_flight):
+                if i == j:
+                    continue
+                if p1["appPort"] and p1["appPort"] == p2["appPort"]:
+                    warnings.append(f"Port :{p1['appPort']} also claimed by {p2['slug']}")
+                if p1["worktree"] and p1["worktree"] == p2["worktree"] and p1["branch"] and p2["branch"] and p1["branch"] != p2["branch"]:
+                    warnings.append(f"Worktree {p1['worktreeShort']} shared with {p2['slug']} ({p2['branch']})")
+            if warnings:
+                p1["collisionWarning"] = " • ".join(warnings)
 
-    projects.sort(key=lambda p: (p["sortPriority"], -float(p.get("mtime") or 0.0)))
-    return projects
+        for p in projects:
+            p["sortPriority"] = _project_sort_priority(p)
+            p["isOpen"] = p["sortPriority"] < 3
+
+        projects.sort(key=lambda p: (p["sortPriority"], -float(p.get("mtime") or 0.0)))
+        _PROJECTS_CACHE["ts"] = time.time()
+        _PROJECTS_CACHE["root"] = ROOT_DIR
+        _PROJECTS_CACHE["data"] = projects
+        return list(projects)
 
 
 def set_body_env_attributes(content: str, branch: str, worktree: str, app_port: str, backend_port: str) -> str:
@@ -1634,6 +1652,7 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         if parsed.path not in ("/api/projects/action", "/api/mimir/apply"):
             return self.send_json({"ok": False, "error": "Unknown endpoint"}, status=404)
 
+        _PROJECTS_CACHE["ts"] = 0.0
         try:
             length = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
@@ -1715,7 +1734,7 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                     "ok": True,
                     "audit": audit_payload,
                     "mimirAudit": audit_payload,
-                    "projects": discover_projects(),
+                    "projects": discover_projects(force=True),
                 })
 
             if action == "refresh_telemetry":
@@ -1752,12 +1771,12 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
             if action == "archive_all_done":
                 moved = []
-                for proj in discover_projects():
+                for proj in discover_projects(force=True):
                     if not proj["archived"] and proj["overallStatus"] == "done":
                         fp = resolve_safe_project_path(proj["id"])
                         new_fp = archive_or_restore_file(fp, True)
                         moved.append(os.path.relpath(new_fp, ROOT_DIR))
-                return self.send_json({"ok": True, "moved": moved, "projects": discover_projects()})
+                return self.send_json({"ok": True, "moved": moved, "projects": discover_projects(force=True)})
 
             if action == "toggle_pause":
                 mod = _get_odin_state_module()

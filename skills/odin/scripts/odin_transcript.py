@@ -30,6 +30,8 @@ _MODEL_CHANGE_RE = re.compile(
 )
 _PATH_CACHE: dict = {}
 _DISCOVERY_CACHE = {"ts": 0.0, "map": {}}
+_ACTIVITY_CACHE: dict[str, tuple[float, int, dict]] = {}
+_QUESTIONS_CACHE: dict[str, tuple[float, int, dict]] = {}
 
 
 def projects_dir() -> str:
@@ -73,10 +75,19 @@ def _session_id_from_transcript_path(path: str) -> str:
 def discover_session_for_file(filename: str, filepath: str = "", max_files: int = 40) -> str:
     """Find the most recent session whose transcript mentions this Odin state file."""
     now = time.time()
-    if (now - _DISCOVERY_CACHE["ts"]) < 6.0 and filename in _DISCOVERY_CACHE["map"]:
-        return _DISCOVERY_CACHE["map"][filename]
-    candidates = glob.glob(os.path.join(projects_dir(), "*", "*.jsonl")) + glob.glob(
-        os.path.join(antigravity_brain_dir(), "*", ".system_generated", "logs", "transcript.jsonl")
+    p_dir = projects_dir()
+    a_dir = antigravity_brain_dir()
+    cache_key = (p_dir, a_dir, filename)
+    cached_entry = _DISCOVERY_CACHE["map"].get(cache_key)
+    if isinstance(cached_entry, tuple) and len(cached_entry) == 2:
+        entry_ts, entry_val = cached_entry
+        ttl = 30.0 if entry_val else 12.0
+        if (now - entry_ts) < ttl:
+            return entry_val
+    elif isinstance(cached_entry, str) and (now - _DISCOVERY_CACHE["ts"]) < 6.0:
+        return cached_entry
+    candidates = glob.glob(os.path.join(p_dir, "*", "*.jsonl")) + glob.glob(
+        os.path.join(a_dir, "*", ".system_generated", "logs", "transcript.jsonl")
     )
     candidates.sort(key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0, reverse=True)
     best = ""
@@ -90,6 +101,7 @@ def discover_session_for_file(filename: str, filepath: str = "", max_files: int 
             best = _session_id_from_transcript_path(path)
             break
     _DISCOVERY_CACHE["ts"] = now
+    _DISCOVERY_CACHE["map"][cache_key] = (now, best)
     if best:
         _DISCOVERY_CACHE["map"][filename] = best
     return best
@@ -200,14 +212,19 @@ def last_activity(path: str) -> dict:
     if not path or not os.path.isfile(path):
         return result
     try:
-        result["lastActivityTs"] = os.path.getmtime(path)
+        st = os.stat(path)
+        result["lastActivityTs"] = st.st_mtime
     except OSError:
-        pass
+        return result
+    cached = _ACTIVITY_CACHE.get(path)
+    if cached and cached[0] == st.st_mtime and cached[1] == st.st_size:
+        return dict(cached[2])
     for obj in reversed(read_lines(path, tail_bytes=32768)):
         if obj.get("type") == "assistant":
             for block in reversed(_blocks(obj)):
                 if block.get("type") == "tool_use" and block.get("name"):
                     result["lastToolName"] = str(block["name"])
+                    _ACTIVITY_CACHE[path] = (st.st_mtime, st.st_size, dict(result))
                     return result
         elif obj.get("type") == "PLANNER_RESPONSE":
             for tc in reversed(obj.get("tool_calls") or []):
@@ -215,7 +232,9 @@ def last_activity(path: str) -> dict:
                     name = tc.get("name") or tc.get("tool_name")
                     if name:
                         result["lastToolName"] = str(name)
+                        _ACTIVITY_CACHE[path] = (st.st_mtime, st.st_size, dict(result))
                         return result
+    _ACTIVITY_CACHE[path] = (st.st_mtime, st.st_size, dict(result))
     return result
 
 
@@ -238,6 +257,15 @@ def analyze_questions(path: str) -> dict:
         "lastResolutionTs": 0.0,
         "lastQuestionTs": 0.0,
     }
+    if not path or not os.path.isfile(path):
+        return result
+    try:
+        st = os.stat(path)
+    except OSError:
+        return result
+    cached = _QUESTIONS_CACHE.get(path)
+    if cached and cached[0] == st.st_mtime and cached[1] == st.st_size:
+        return {k: (list(v) if isinstance(v, list) else v) for k, v in cached[2].items()}
     pending: dict = {}
     text_question = None
     resolved = False
@@ -315,4 +343,9 @@ def analyze_questions(path: str) -> dict:
         )
         result["openQuestions"] = [_short(re.sub(r"\*\*|`", "", b)) for b in bullets[:4] if b.strip()]
     result["questionsResolved"] = resolved and not result["awaitingHuman"]
+    _QUESTIONS_CACHE[path] = (
+        st.st_mtime,
+        st.st_size,
+        {k: (list(v) if isinstance(v, list) else v) for k, v in result.items()},
+    )
     return result
