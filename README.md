@@ -68,30 +68,38 @@ With a cert configured, the server speaks HTTPS on every interface, local `https
 
 ### Custom local domain (`odin.dev`)
 
-Because browsers enforce HSTS (`https://` on port `443`) on `.dev` domains, serving `https://odin.dev/` and `https://staging.odin.dev/` without `:8788` requires `/etc/hosts`, a local `mkcert` certificate, and an `nginx` reverse proxy forwarding `Host` and `X-Forwarded-Proto`:
+To open the dashboard at `https://odin.dev/` (and staging at `https://staging.odin.dev/`) instead of `127.0.0.1:8788`, put an `nginx` reverse proxy in front of Odin. Browsers force `https` on port `443` for every `.dev` domain (HSTS), so you also need a trusted local certificate and an `/etc/hosts` entry. Odin itself keeps serving plain HTTP on `127.0.0.1:8788`; leave `server.cert` and `server.key` unset, or change the `proxy_pass` lines below to `https://`.
 
-1. **Map `/etc/hosts`:**
+1. **Install the tools and trust mkcert's local CA** (skip `mkcert -install` if you already ran it for the HTTPS section above):
    ```bash
-   echo "127.0.0.1 odin.dev staging.odin.dev" | sudo tee -a /etc/hosts && sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder
+   brew install nginx mkcert
+   mkcert -install
    ```
-2. **Generate a local certificate (`mkcert`):**
+2. **Map the names to this machine:**
    ```bash
-   mkdir -p ~/certs
-   mkcert -cert-file ~/certs/odin.dev.crt -key-file ~/certs/odin.dev.key odin.dev staging.odin.dev odin.local staging.odin.local odin.localhost staging.odin.localhost
+   printf '127.0.0.1 odin.dev staging.odin.dev\n::1 odin.dev staging.odin.dev\n' | sudo tee -a /etc/hosts && sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder
    ```
-3. **Add an `nginx` virtual host (`/opt/homebrew/etc/nginx/servers/odin.conf`):**
+   `odin.dev` is a real public domain. Without the `::1` line, a browser that looks up IPv6 addresses can reach the public site instead of your dashboard.
+3. **Create a certificate for both names:**
+   ```bash
+   mkdir -p ~/.config/odin/certs
+   mkcert -cert-file ~/.config/odin/certs/odin.dev.pem -key-file ~/.config/odin/certs/odin.dev-key.pem odin.dev staging.odin.dev
+   ```
+4. **Add an `nginx` server file** at `/opt/homebrew/etc/nginx/servers/odin.conf`. nginx doesn't expand `~`, so write the certificate paths out in full:
    ```nginx
    server {
        listen 80;
-       server_name odin.dev staging.odin.dev odin.local staging.odin.local odin.localhost staging.odin.localhost;
+       listen [::]:80;
+       server_name odin.dev staging.odin.dev;
        return 301 https://$host$request_uri;
    }
 
    server {
        listen 443 ssl;
-       server_name odin.dev odin.local odin.localhost;
-       ssl_certificate     /Users/<you>/certs/odin.dev.crt;
-       ssl_certificate_key /Users/<you>/certs/odin.dev.key;
+       listen [::]:443 ssl;
+       server_name odin.dev;
+       ssl_certificate     /Users/<you>/.config/odin/certs/odin.dev.pem;
+       ssl_certificate_key /Users/<you>/.config/odin/certs/odin.dev-key.pem;
 
        location / {
            proxy_pass http://127.0.0.1:8788;
@@ -105,9 +113,10 @@ Because browsers enforce HSTS (`https://` on port `443`) on `.dev` domains, serv
 
    server {
        listen 443 ssl;
-       server_name staging.odin.dev staging.odin.local staging.odin.localhost;
-       ssl_certificate     /Users/<you>/certs/odin.dev.crt;
-       ssl_certificate_key /Users/<you>/certs/odin.dev.key;
+       listen [::]:443 ssl;
+       server_name staging.odin.dev;
+       ssl_certificate     /Users/<you>/.config/odin/certs/odin.dev.pem;
+       ssl_certificate_key /Users/<you>/.config/odin/certs/odin.dev-key.pem;
 
        location / {
            proxy_pass http://127.0.0.1:8789;
@@ -119,13 +128,18 @@ Because browsers enforce HSTS (`https://` on port `443`) on `.dev` domains, serv
        }
    }
    ```
-4. **Allow the hostnames in `~/.config/odin/config.json`:**
-   ```json
-   "server": {
-     "allowed_hosts": ["odin.dev", "staging.odin.dev", "odin.local", "staging.odin.local", "odin.localhost", "staging.odin.localhost"]
-   }
+5. **Start nginx as root**, because ports 80 and 443 need it. Check the config first:
+   ```bash
+   sudo nginx -t && sudo brew services start nginx
    ```
-   `odin-server.py` honors `X-Forwarded-Proto` for CSRF `Origin` checks and link rewriting, and the dashboard switches between `odin.dev` and `staging.odin.dev` automatically.
+   After later edits to `odin.conf`, run `sudo nginx -s reload`.
+   Homebrew warns that it is taking `root` ownership of some nginx paths; that is expected when the service runs as root.
+6. **Allow the names** in `~/.config/odin/config.json`, then restart the Odin server:
+   ```json
+   "server": { "allowed_hosts": ["odin.dev", "staging.odin.dev"] }
+   ```
+
+Pages served through the proxy rewrite their `127.0.0.1:8788` and `:8789` links to `https://odin.dev` and `https://staging.odin.dev` (using `X-Forwarded-Proto` for the scheme), and the dashboard treats `staging.odin.dev` as the staging view. Links that Odin prints in chat and in desktop notifications still use `127.0.0.1:8788`. `https://staging.odin.dev/` returns `502 Bad Gateway` until the staging server on `:8789` is running.
 
 ### Progress timeline
 
