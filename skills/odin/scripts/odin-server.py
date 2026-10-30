@@ -1464,6 +1464,12 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         host = self.headers.get("Host", "")
         if host_allowed(host) and (not check_origin or origin_allowed(self.headers.get("Origin"), host)):
             return False
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            if 0 < length <= 65536:
+                self.rfile.read(length)
+        except Exception:
+            pass
         self.send_json({"ok": False, "error": "Forbidden host or origin"}, status=403)
         return True
 

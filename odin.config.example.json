@@ -5,7 +5,7 @@
     "host": "0.0.0.0",
     "cert": "~/.config/odin/certs/odin.pem",
     "key": "~/.config/odin/certs/odin-key.pem",
-    "allowed_hosts": []
+    "allowed_hosts": ["odin.dev", "staging.odin.dev"]
   },
   "repos": {
     "web": {
