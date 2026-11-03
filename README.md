@@ -174,7 +174,7 @@ The PR hook is off unless `pr` is set. When it rewrites a command, it asks you t
 
 ## Run the dashboard at login (macOS, optional)
 
-Create `~/Library/LaunchAgents/com.odin.server.plist` with `ProgramArguments` set to `python3 <path>/skills/odin/scripts/odin-server.py --dir <your root>`, with `RunAtLoad` and `KeepAlive` both true. Then run `launchctl load ~/Library/LaunchAgents/com.odin.server.plist`.
+Create `~/Library/LaunchAgents/com.odin.server.plist` with `ProgramArguments` set to `python3 <path>/skills/odin/scripts/odin-server.py --dir <your root>`, with `RunAtLoad` and `KeepAlive` both true. Then run `launchctl load ~/Library/LaunchAgents/com.odin.server.plist`. Because `KeepAlive` immediately respawns the primary checkout's server if its PID is killed, use the `:8789` staging server when testing server changes from a worktree, or unload the plist (`launchctl unload ~/Library/LaunchAgents/com.odin.server.plist`) first.
 
 ## Develop
 
@@ -185,7 +185,7 @@ claude plugin validate .
 claude --plugin-dir .
 ```
 
-Running from a checkout also enables the staging sandbox (see [skills/odin/references/staging.md](skills/odin/references/staging.md)).
+When your checkout is symlinked as a live plugin (`~/.gemini/config/plugins/odin` or a local Claude marketplace), keep the primary checkout on `main` and create a `git worktree` (`git worktree add ../odin-<feature> -b feat/<feature>`) for feature branches so active sessions and the live `:8788` server never drift off `main`. Running from a checkout also enables the `:8789` staging sandbox (see [skills/odin/references/staging.md](skills/odin/references/staging.md)).
 
 ## License
 

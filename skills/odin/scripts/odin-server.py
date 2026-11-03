@@ -417,17 +417,24 @@ def get_session_telemetry(
     last_tool_name = activity["lastToolName"]
     last_activity_ts = activity["lastActivityTs"]
 
+    is_archived = "/archive/" in filepath.replace("\\", "/")
     has_awaiting = bool(
-        re.search(r'data-status=["\']awaiting_human["\']', content, re.IGNORECASE)
+        re.search(r'<section\b[^>]*\bdata-status=["\']awaiting_human["\']', content, re.IGNORECASE)
     )
     all_done = bool(
-        re.search(r'id=["\']human-validation["\'][^>]*data-status=["\']done["\']', content, re.IGNORECASE)
+        re.search(
+            r'<section\b[^>]*\bid=["\'](?:human-validation|human)["\'][^>]*\bdata-status=["\']done["\']'
+            r'|<section\b[^>]*\bdata-status=["\']done["\'][^>]*\bid=["\'](?:human-validation|human)["\']',
+            content,
+            re.IGNORECASE,
+        )
     )
     recent_exec = bool(
         last_activity_ts
         and (time.time() - last_activity_ts) < 20.0
         and not watcher_armed
         and not all_done
+        and not is_archived
     )
 
     if paused:
@@ -439,6 +446,9 @@ def get_session_telemetry(
     elif recent_exec:
         agent_state = "executing"
         status_label = f"⚡ AGENT EXECUTING{f' ({last_tool_name})' if last_tool_name else ''}"
+    elif all_done and not has_awaiting:
+        agent_state = "done"
+        status_label = "✅ ALL PHASES COMPLETE"
     elif has_awaiting:
         agent_state = "awaiting_human"
         status_label = "🟡 YOUR TURN IN ODIN (Click Save/Approve to Wake)"

@@ -1,8 +1,8 @@
 # Odin repository
 
-Odin is a Claude Code plugin: `.claude-plugin/` (manifest + marketplace), `skills/odin/` (SKILL.md, scripts, dashboard, references), `hooks/hooks.json`, `tests/`.
+Odin is a Claude Code and Antigravity plugin: `plugin.json`, `.claude-plugin/` (manifest + marketplace), `skills/odin/` (SKILL.md, scripts, dashboard, references), `hooks.json` / `hooks/hooks.json`, `tests/`.
 
-- Commit directly to `main` with clear, atomic messages.
+- Keep the primary checkout on `main` so live plugin symlinks (`~/.gemini/config/plugins/odin`, local Claude marketplace) and the `:8788` server never drift onto a feature branch. Do branch work in a `git worktree` (`git worktree add ../odin-<slug> -b feat/<slug>`) or the `:8789` staging worktree, then fast-forward or merge into `main`.
 - Before committing, run `python3 -m unittest discover tests` and `claude plugin validate .`.
 - Test plugin changes locally with `claude --plugin-dir .` (use `/reload-plugins` after edits).
 

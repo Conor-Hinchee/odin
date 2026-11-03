@@ -3851,6 +3851,94 @@ def _parse_file_notes(raw_notes: list[str] | None) -> dict[str, str]:
     return notes
 
 
+_SAFE_ENV_TEMPLATES = {
+    ".env.example",
+    ".env.sample",
+    ".env.template",
+    ".env.dist",
+    ".env.defaults",
+    ".env.schema",
+    ".env.test.example",
+    ".env.local.example",
+}
+
+_SENSITIVE_SUFFIXES = (
+    ".pem",
+    ".key",
+    ".p12",
+    ".pfx",
+    ".keystore",
+    ".jks",
+    ".kdbx",
+)
+
+_SENSITIVE_BASENAMES = {
+    ".env",
+    ".npmrc",
+    ".netrc",
+    ".pypirc",
+    "id_rsa",
+    "id_ed25519",
+    "id_ecdsa",
+    "id_dsa",
+}
+
+
+def _is_sensitive_diff_path(path: str) -> bool:
+    """Return True if path points to an environment, private key, or credential file that must never be embedded in state HTML."""
+    norm = (path or "").strip().replace("\\", "/")
+    if not norm:
+        return False
+    base = os.path.basename(norm).lower()
+    if base in _SAFE_ENV_TEMPLATES or base.endswith((".example", ".sample", ".template")):
+        return False
+    if base in _SENSITIVE_BASENAMES or base.startswith(".env."):
+        return True
+    if base.endswith(_SENSITIVE_SUFFIXES):
+        return True
+    if ("credentials" in base or "service-account" in base or "service_account" in base or "client_secret" in base) and base.endswith(".json"):
+        return True
+    return False
+
+
+def _filter_sensitive_diff_blocks(raw_diff: str) -> str:
+    """Strip any unified diff file blocks whose source or target path matches _is_sensitive_diff_path."""
+    if not (raw_diff or "").strip():
+        return ""
+    kept: list[str] = []
+    for block in re.split(r"(?=^diff --git )", raw_diff, flags=re.MULTILINE):
+        if not block.strip().startswith("diff --git"):
+            continue
+        first_line = block.splitlines()[0] if block.splitlines() else ""
+        m_hdr = re.match(r"^diff --git a/(.*?) b/(.*?)$", first_line)
+        if m_hdr and (_is_sensitive_diff_path(m_hdr.group(1)) or _is_sensitive_diff_path(m_hdr.group(2))):
+            continue
+        kept.append(block.rstrip("\n"))
+    return "\n".join(kept)
+
+
+def _collect_untracked_diff(worktree_dir: str, context_lines: int, files_filter: list[str] | None = None) -> str:
+    """Collect unified diffs for non-sensitive untracked working-tree files."""
+    untracked_cmd = ["git", "-C", worktree_dir, "ls-files", "--others", "--exclude-standard"]
+    if files_filter:
+        untracked_cmd.append("--")
+        untracked_cmd.extend(files_filter)
+    untracked_res = subprocess.run(untracked_cmd, capture_output=True, text=True)
+    chunks: list[str] = []
+    for untracked_rel in (untracked_res.stdout or "").splitlines():
+        untracked_rel = untracked_rel.strip()
+        if not untracked_rel or _is_sensitive_diff_path(untracked_rel):
+            continue
+        no_idx_res = subprocess.run(
+            ["git", "-C", worktree_dir, "diff", "--no-index", f"-U{context_lines}", "--", "/dev/null", untracked_rel],
+            capture_output=True,
+            text=True,
+        )
+        if (no_idx_res.stdout or "").strip():
+            chunks.append(no_idx_res.stdout.rstrip("\n"))
+    return "\n".join(chunks)
+
+
 def generate_contextual_diff_html(
     worktree_dir: str,
     context_lines: int = 12,
@@ -3867,28 +3955,17 @@ def generate_contextual_diff_html(
         cmd_base.extend(files_filter)
 
     res = subprocess.run(cmd_base, capture_output=True, text=True)
-    raw_diff = res.stdout or ""
+    raw_diff = _filter_sensitive_diff_blocks(res.stdout or "")
     diff_source_label = "Working Tree vs. HEAD"
 
-    # Also include untracked working-tree files (e.g. newly added unit test files)
-    untracked_cmd = ["git", "-C", worktree_dir, "ls-files", "--others", "--exclude-standard"]
-    if files_filter:
-        untracked_cmd.append("--")
-        untracked_cmd.extend(files_filter)
-    untracked_res = subprocess.run(untracked_cmd, capture_output=True, text=True)
-    for untracked_rel in (untracked_res.stdout or "").splitlines():
-        untracked_rel = untracked_rel.strip()
-        if not untracked_rel:
-            continue
-        no_idx_res = subprocess.run(
-            ["git", "-C", worktree_dir, "diff", "--no-index", f"-U{context_lines}", "--", "/dev/null", untracked_rel],
-            capture_output=True,
-            text=True,
-        )
-        if (no_idx_res.stdout or "").strip():
-            raw_diff = (raw_diff.rstrip("\n") + "\n" + no_idx_res.stdout) if raw_diff.strip() else no_idx_res.stdout
+    # When tracked working-tree changes exist, also include non-sensitive untracked files
+    if raw_diff.strip():
+        untracked_diff = _collect_untracked_diff(worktree_dir, context_lines, files_filter)
+        if untracked_diff.strip():
+            raw_diff = raw_diff.rstrip("\n") + "\n" + untracked_diff
 
-    # Fallback if changes were already committed on the branch
+    # If changes were already committed on the branch (git diff HEAD is empty), prefer the committed branch diff
+    # before falling back to untracked working-tree files so unrelated untracked files in shared checkouts never mask a branch diff.
     if not raw_diff.strip():
         configured_bases = [
             r["base_branch"] for r in (CONFIG.get("repos") or {}).values()
@@ -3907,10 +3984,18 @@ def generate_contextual_diff_html(
                     fb_cmd.append("--")
                     fb_cmd.extend(files_filter)
                 fb_res = subprocess.run(fb_cmd, capture_output=True, text=True)
-                if (fb_res.stdout or "").strip():
-                    raw_diff = fb_res.stdout
+                filtered_fb = _filter_sensitive_diff_blocks(fb_res.stdout or "")
+                if filtered_fb.strip():
+                    raw_diff = filtered_fb
                     diff_source_label = f"Branch Diff ({ref_spec})"
                     break
+
+    # Final fallback: only untracked non-sensitive working-tree files exist (e.g., new file before first commit)
+    if not raw_diff.strip():
+        untracked_diff = _collect_untracked_diff(worktree_dir, context_lines, files_filter)
+        if untracked_diff.strip():
+            raw_diff = untracked_diff
+            diff_source_label = "Working Tree vs. HEAD"
 
     if not raw_diff.strip():
         return (
@@ -3931,6 +4016,8 @@ def generate_contextual_diff_html(
         lines = block.splitlines()
         m_header = re.match(r"^diff --git a/(.*?) b/(.*?)$", lines[0])
         file_path = m_header.group(2) if m_header else "unknown"
+        if _is_sensitive_diff_path(file_path):
+            continue
 
         hunks = []
         cur_hunk = None
@@ -4944,18 +5031,21 @@ def _build_child_delta_ticket_html(
     did_esc = html_mod.escape(delta_id, quote=True)
     prel_esc = html_mod.escape(parent_rel, quote=True)
     slug_esc = html_mod.escape(child_slug, quote=True)
-    repo_display = html_mod.escape(repo_name or os.path.basename(worktree_dir.rstrip("/")) or "odin")
+    raw_repo = (repo_name or os.path.basename(worktree_dir.rstrip("/")) or "odin").strip()
+    repo_display = html_mod.escape(raw_repo)
+    app_port_attr = str((CONFIG.get("ports") or {}).get("live", 8788)) if raw_repo == "odin" else ""
+    app_port_display = app_port_attr or "none"
     template_path = Path(__file__).resolve().parent.parent / "references" / "state-template.html"
     if template_path.exists():
         tpl = template_path.read_text(encoding="utf-8")
         tpl = tpl.replace("<Task Name>", title_esc)
         tpl = tpl.replace("<task-slug>", slug_esc)
         tpl = tpl.replace("<absolute-worktree-path>", wt_esc)
-        tpl = tpl.replace("<app-port>", "8788")
+        tpl = tpl.replace("<app-port>", app_port_attr)
         tpl = tpl.replace("<backend-port>", "")
         tpl = tpl.replace("<session-id>", sid_esc)
         tpl = tpl.replace("&lt;repo&gt;", repo_display)
-        tpl = tpl.replace("&lt;app-port&gt;", "8788")
+        tpl = tpl.replace("&lt;app-port&gt;", app_port_display)
         tpl = tpl.replace("&lt;backend-port&gt;", "none")
         tpl = tpl.replace("2026-01-01T00:00:00Z", now_iso())
         tpl = re.sub(
@@ -4982,7 +5072,7 @@ def _build_child_delta_ticket_html(
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>⚡ [ACTIVE] ⚡ Odin Command Center — {title_esc}</title>
 </head>
-<body data-branch="feat/{slug_esc}" data-worktree="{wt_esc}" data-app-port="8788" data-backend-port="" data-session-id="{sid_esc}" data-parent-delta-id="{did_esc}" data-parent-state-file="{prel_esc}">
+<body data-branch="feat/{slug_esc}" data-worktree="{wt_esc}" data-app-port="{app_port_attr}" data-backend-port="" data-session-id="{sid_esc}" data-parent-delta-id="{did_esc}" data-parent-state-file="{prel_esc}">
   <main class="container">
     <section id="huginn-plan" data-status="active">
       <div class="phase-header">

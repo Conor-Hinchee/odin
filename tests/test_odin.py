@@ -761,7 +761,88 @@ class TestOdin(unittest.TestCase):
         self.assertIn("odin-diff-row-has-comment", banner_script)
         self.assertIn("` \" + inline + \" `", banner_script)
 
+    def test_contextual_diff_excludes_sensitive_files_and_prefers_branch_diff(self):
+        self.assertTrue(self.odin_state._is_sensitive_diff_path(".env"))
+        self.assertTrue(self.odin_state._is_sensitive_diff_path("sub/dir/.env.local"))
+        self.assertTrue(self.odin_state._is_sensitive_diff_path("certs/private.pem"))
+        self.assertTrue(self.odin_state._is_sensitive_diff_path("config/service-account-credentials.json"))
+        self.assertFalse(self.odin_state._is_sensitive_diff_path(".env.example"))
+        self.assertFalse(self.odin_state._is_sensitive_diff_path("config/.env.template"))
+        self.assertFalse(self.odin_state._is_sensitive_diff_path("src/index.ts"))
 
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-b", "main"], cwd=str(repo), check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=str(repo), check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(repo), check=True, capture_output=True)
+            (repo / "app.py").write_text("print('v1')\n", encoding="utf-8")
+            subprocess.run(["git", "add", "app.py"], cwd=str(repo), check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), check=True, capture_output=True)
+
+            subprocess.run(["git", "checkout", "-b", "feat/branch-diff"], cwd=str(repo), check=True, capture_output=True)
+            (repo / "app.py").write_text("print('v2-committed')\n", encoding="utf-8")
+            subprocess.run(["git", "add", "app.py"], cwd=str(repo), check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "feat: update app"], cwd=str(repo), check=True, capture_output=True)
+
+            # Add an untracked .env and an unrelated untracked note in the working tree
+            (repo / ".env").write_text("SUPER_SECRET_VALUE=never_render_me\n", encoding="utf-8")
+            (repo / "untracked_note.txt").write_text("unrelated untracked file\n", encoding="utf-8")
+
+            diff_html = self.odin_state.generate_contextual_diff_html(str(repo))
+            self.assertIn("app.py", diff_html)
+            self.assertIn("v2-committed", diff_html)
+            self.assertIn("Branch Diff (main...HEAD)", diff_html)
+            self.assertNotIn("SUPER_SECRET_VALUE", diff_html)
+            self.assertNotIn("untracked_note.txt", diff_html)
+
+    def test_session_telemetry_ignores_collapsed_iteration_awaiting_human_when_done(self):
+        done_html = """<!DOCTYPE html>
+<html>
+<body data-session-id="">
+  <section id="huginn-plan" data-status="done"></section>
+  <section id="thor-execution" data-status="done"></section>
+  <section id="heimdall-validation" data-status="done">
+    <details class="odin-iteration-card" data-iteration="1" data-status="awaiting_human"></details>
+    <details class="odin-iteration-card" data-iteration="2" data-status="done" open></details>
+  </section>
+  <section id="hlidskjalf-judge" data-status="done"></section>
+  <section id="human-validation" data-status="done"></section>
+</body>
+</html>"""
+        with tempfile.TemporaryDirectory() as tmp:
+            state_file = Path(tmp) / "completed-ticket.html"
+            state_file.write_text(done_html, encoding="utf-8")
+            telemetry = self.odin_server.get_session_telemetry(str(state_file))
+            self.assertEqual(telemetry["agentState"], "done")
+            self.assertIn("ALL PHASES COMPLETE", telemetry["statusLabel"])
+
+    def test_spawned_delta_ticket_app_port_only_for_odin_repo(self):
+        odin_html = self.odin_state._build_child_delta_ticket_html(
+            child_slug="mimir-delta-odin-01",
+            title="Odin Delta",
+            worktree_dir="/tmp/odin",
+            session_id="",
+            delta_id="delta-odin-01",
+            parent_rel="odin-states/parent.html",
+            plan_html="<p>Plan</p>",
+            repo_name="odin",
+        )
+        self.assertIn('data-app-port="8788"', odin_html)
+
+        external_html = self.odin_state._build_child_delta_ticket_html(
+            child_slug="mimir-delta-ext-01",
+            title="External Delta",
+            worktree_dir="/tmp/ext-repo",
+            session_id="",
+            delta_id="delta-ext-01",
+            parent_rel="odin-states/parent.html",
+            plan_html="<p>Plan</p>",
+            repo_name="ext-repo",
+        )
+        self.assertIn('data-app-port=""', external_html)
 
 
 if __name__ == "__main__":
