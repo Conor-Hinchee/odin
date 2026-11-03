@@ -5,7 +5,8 @@
     "host": "0.0.0.0",
     "cert": "~/.config/odin/certs/odin.pem",
     "key": "~/.config/odin/certs/odin-key.pem",
-    "allowed_hosts": ["odin.dev", "staging.odin.dev"]
+    "allowed_hosts": ["odin.dev", "staging.odin.dev"],
+    "token": null
   },
   "repos": {
     "web": {
@@ -28,6 +29,7 @@
     { "id": "/code-review", "label": "/code-review", "desc": "Review the current diff for bugs" },
     { "id": "/simplify", "label": "/simplify", "desc": "Clean up the changed code" }
   ],
+  "skills_allow_custom": true,
   "telemetry": {
     "title": "Deployed Versions",
     "command": "my-deploy-cli status --json",

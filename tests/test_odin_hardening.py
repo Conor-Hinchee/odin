@@ -257,5 +257,14 @@ class TestTokenGate(_IsolatedConfig, unittest.TestCase):
         self.assertFalse(self.server_mod._ip_is_loopback("not-an-ip"))
 
 
+class TestSkillBudget(unittest.TestCase):
+    def test_skill_md_stays_lean(self):
+        text = (ODIN_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assertLessEqual(len(text.encode("utf-8")), 13 * 1024, "SKILL.md loads on every run; move detail to references/")
+        m = re.search(r"^description:\s*(.+)$", text, re.MULTILINE)
+        self.assertIsNotNone(m)
+        self.assertLessEqual(len(m.group(1)), 400, "the description should be trigger text, not a feature list")
+
+
 if __name__ == "__main__":
     unittest.main()

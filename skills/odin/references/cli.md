@@ -9,7 +9,8 @@ All commands are `python3 "${CLAUDE_SKILL_DIR}/scripts/odin-state.py" <command> 
 | `log` | Append an entry to a phase's timeline. No status change, no notification. Consecutive duplicates are skipped | `--kind {step,phase,commit,test,finding,decision,plan-change,valkyrie,incident,env}`, `--text` (required), `--detail`, `--outcome {pass,fail}`, `--phase` (defaults to the furthest active/awaiting phase), `--at <ISO time>` to record an event after the fact |
 | `set-env` | Restamp `data-branch`/`data-worktree`/`data-*-port` and the header env bar, and log the change | `--branch`, `--worktree`, `--app-port`, `--backend-port`, `--reason` |
 | `step-back` | Start iteration N+1 after a rejection or follow-up; earlier cards are kept | `--reason` (required), `--root-cause`, `--source {human,ci,heimdall}` |
-| `wait-for-human` | Block until the human acts in the dashboard, then print the wakeup JSON and exit | `--phase`, `--session-id`, `--timeout`, `--consume-existing` |
+| `wait-for-human` | Block until the human acts in the dashboard, then print the wakeup JSON and exit. See [wakeup.md](wakeup.md) | `--phase {huginn,heimdall,human}` (section ids accepted; unknown values exit 2), `--session-id`, `--timeout`, `--consume-existing` |
+| `stop-watcher` | Stop an armed `wait-for-human` (the human answered in chat). Signals the pid only if it is that task's watcher, and always clears the heartbeat | |
 | `propose-delta` | Record a phase 4 harness delta proposal | `--id` (required), `--category`, `--target-path`, `--failure-pattern`, `--proposed-diff`, `--priority {p0,p1,p2}` |
 | `mimir-audit` | Summarize delta proposals across every state file under a root | `--dir`, `--format {markdown,json}` |
 | `spawn-delta-ticket` | Turn a delta proposal into its own Odin state file | `--id` (required), `--dir` |
@@ -27,6 +28,7 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/odin-server.py" --dir <root> [--port 8788] 
 - `GET /go?file=<absolute state file path>`: redirects to that state file's page (or `/` when the file is outside `<root>`). Desktop banners link here.
 - `POST /api/presence {"scope": "*" | "<page path>"}`: open pages with browser notifications allowed ping this every 5s. `GET /api/presence?file=<path>` returns `covered: true` when the dashboard or that file's page pinged in the last 15s, and `odin-notify.sh` then skips its banner.
 - `POST /api/projects/action`: archive, restore, update phases, wake the agent, allocate environments, stop dev ports, prune worktrees, staging.
+- **Token gate**: with `server.token` (or `ODIN_TOKEN`) set, every request from a non-local client needs `Authorization: Bearer <token>` or the `odin_token` cookie, which `GET /?token=<token>` sets (HttpOnly, SameSite=Strict) before redirecting without the token. A loopback request is non-local when it carries a non-loopback `X-Real-IP` or `X-Forwarded-For`, so a local reverse proxy can't bypass the gate. Direct loopback requests (CLI, hooks, a browser on this machine) never need the token.
 
 ## Files Odin writes next to state files
 
@@ -39,7 +41,9 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/odin-server.py" --dir <root> [--port 8788] 
 
 ## Config
 
-`python3 "${CLAUDE_SKILL_DIR}/scripts/odin_config.py"` prints the merged config; `--url` prints just the live server's base URL. Keys: `root`, `ports`, `server` (`host`, `cert`, `key`, `allowed_hosts`), `repos`, `skill_pills`, `telemetry`, `pr`, `staging`, `progress`. See `odin.config.example.json` in the repository.
+`python3 "${CLAUDE_SKILL_DIR}/scripts/odin_config.py"` prints the merged config; `--url` prints just the live server's base URL. Keys: `root`, `ports`, `server` (`host`, `cert`, `key`, `allowed_hosts`, `token`), `repos`, `skill_pills`, `skills_allow_custom`, `telemetry`, `pr`, `staging`, `progress`.
+
+`skills_allow_custom` (default `true`) lets the dashboard's "+ /custom-skill" box wake the agent with skills that aren't in `skill_pills`. Either way, only well-formed `/skill-name` values reach a wakeup; anything else is reported in `droppedSkills`. Set it to `false` to allow only `skill_pills` ids. See `odin.config.example.json` in the repository.
 
 `telemetry.command` is any shell command that prints a JSON array of row objects. The dashboard shows it as a table, with one row per object, `name` as the row label, and `columns: [{key, label}]` choosing the columns. A row named `latest` becomes the reference that other rows are compared to.
 

@@ -21,6 +21,8 @@ claude plugin install odin@odin
 
 Odin has no version number: every commit on `main` is a new release. To get updates automatically, run `/plugin`, open **Marketplaces**, select **odin** and choose **Enable auto-update**. A running session keeps the version it loaded until you run `/reload-plugins`.
 
+Odin installs hooks that run on every session and rewrite `gh pr create` commands, so auto-update means new hook code runs without review. To review changes before they run, leave auto-update off, or clone the repository, check out a commit you've read, and add that checkout as the marketplace (below). Update by pulling and reading the diff.
+
 To work on Odin itself, add your checkout as the marketplace instead (`claude plugin marketplace add /path/to/odin`). Plugins from a local marketplace load in place, so your edits apply on the next session or `/reload-plugins`.
 
 Then, in a session, run `/odin:odin <your task>`, or ask Claude to "boot up Odin" to start the dashboard at <http://127.0.0.1:8788/>.
@@ -64,7 +66,15 @@ The server prints the network URL, for example `http://192.168.1.20:8788/`. Page
 
 With a cert configured, the server speaks HTTPS on every interface, local `https://127.0.0.1:8788` included, and Odin's scripts and links switch to `https` automatically. `--host`, `--cert` and `--key` override the config for one run.
 
-**There is no authentication.** Anyone who can reach the port can read and write files in your repositories and approve, reject or wake the agent. Only bind to `0.0.0.0` on a network you trust. The server does refuse requests whose `Host` is an unknown domain name (DNS rebinding) and POSTs from other websites (CSRF); add extra hostnames you use, such as a router-assigned name, to `server.allowed_hosts`.
+**Set a token before binding to the network.** Anyone who can reach the port can read and write files in your repositories and approve, reject or wake the agent, and a wakeup carries notes and skill names into a session that has shell access. Add a shared secret:
+
+```json
+"server": { "host": "0.0.0.0", "token": "<output of: openssl rand -hex 32>" }
+```
+
+(or set `ODIN_TOKEN`). Then open `http://<this machine>:8788/?token=<token>` once on each other device; it sets an HttpOnly cookie and drops the token from the address bar. Requests from this machine, including the CLI, hooks and your local browser, don't need it. Requests that arrive through a local reverse proxy with a non-loopback `X-Real-IP` or `X-Forwarded-For` (the `odin.dev` setup below sets `X-Real-IP`) do. Without a token the server still runs, but prints a warning at startup.
+
+The server also refuses requests whose `Host` is an unknown domain name (DNS rebinding) and POSTs from other websites (CSRF); add extra hostnames you use, such as a router-assigned name, to `server.allowed_hosts`. Skill names in a wakeup must look like `/skill-name`; set `skills_allow_custom: false` to accept only your `skill_pills`.
 
 ### Custom local domain (`odin.dev`)
 
@@ -163,10 +173,11 @@ python3 skills/odin/scripts/odin_config.py
 |---|---|
 | `root` | Folder the dashboard scans (three levels deep) for `odin-states/` |
 | `ports` | `live` (8788) and `staging` (8789) |
-| `server` | `host` interface, optional TLS `cert`/`key`, and `allowed_hosts` for custom domains or reverse proxies |
+| `server` | `host` interface, optional TLS `cert`/`key`, `allowed_hosts` for custom domains or reverse proxies, and `token` for network access |
 | `repos` | Repos `odin-isolate.py` may allocate worktrees and ports for |
 | `telemetry` | A command that prints a JSON array, shown as a table on the dashboard |
 | `skill_pills` | Skills offered as one-click pills when approving a plan |
+| `skills_allow_custom` | Whether the "+ /custom-skill" box can wake the agent with skills not in `skill_pills` (default `true`) |
 | `pr` | Turns on the PR hook: label, telemetry section, verbatim prompts, `Rule #12` → `Rule 12` |
 | `staging` | Paths for the `:8789` sandbox used to develop Odin itself |
 
