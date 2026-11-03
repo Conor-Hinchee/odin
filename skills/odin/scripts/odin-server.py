@@ -14,6 +14,7 @@ Serves the configured Odin root (see odin_config.py) over http://127.0.0.1:8788 
 import argparse
 import datetime
 import glob
+import hmac
 import html as html_lib
 import http.server
 import ipaddress
@@ -1406,6 +1407,49 @@ def host_allowed(host_header: str) -> bool:
     return name in allowed or name.endswith(".local") or name.endswith(".localhost")
 
 
+TOKEN_COOKIE = "odin_token"
+
+
+def _ip_is_loopback(addr: str) -> bool:
+    try:
+        ip = ipaddress.ip_address((addr or "").strip().split("%", 1)[0])
+    except ValueError:
+        return False
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return (mapped or ip).is_loopback
+
+
+def request_is_local(client_ip: str, headers) -> bool:
+    """True for a direct loopback client. A loopback peer forwarding for someone else (a proxy) is not local."""
+    if not _ip_is_loopback(client_ip):
+        return False
+    forwarded = []
+    if headers.get("X-Real-IP"):
+        forwarded.append(headers.get("X-Real-IP"))
+    forwarded.extend(p for p in (headers.get("X-Forwarded-For") or "").split(",") if p.strip())
+    return all(_ip_is_loopback(p) for p in forwarded)
+
+
+def _cookie_value(cookie_header: str, name: str) -> str:
+    for part in (cookie_header or "").split(";"):
+        k, _, v = part.strip().partition("=")
+        if k == name:
+            return urllib.parse.unquote(v)
+    return ""
+
+
+def presented_token(headers) -> str:
+    auth = (headers.get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return _cookie_value(headers.get("Cookie", ""), TOKEN_COOKIE)
+
+
+def token_matches(candidate: str) -> bool:
+    expected = CONFIG["server"].get("token") or ""
+    return bool(expected) and bool(candidate) and hmac.compare_digest(candidate.encode(), expected.encode())
+
+
 def origin_allowed(origin: str | None, host_header: str) -> bool:
     """CSRF guard for POSTs: a browser Origin must be this server; "null" (file://, sandboxed frames) is refused."""
     if origin is None:
@@ -1473,6 +1517,51 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.send_json({"ok": False, "error": "Forbidden host or origin"}, status=403)
         return True
 
+    def _reject_unauthenticated(self) -> bool:
+        """With server.token set, non-local clients need it (bearer header or the cookie set by /?token=…)."""
+        if not CONFIG["server"].get("token"):
+            return False
+        if request_is_local(self.client_address[0] if self.client_address else "", self.headers):
+            return False
+        if token_matches(presented_token(self.headers)):
+            return False
+        parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query)
+        if self.command == "GET" and "token" in query:
+            if token_matches(query["token"][0]):
+                rest = urllib.parse.urlencode(
+                    [(k, v) for k, vs in query.items() if k != "token" for v in vs]
+                )
+                secure = "; Secure" if tls_enabled(CONFIG) or self.headers.get("X-Forwarded-Proto") == "https" else ""
+                self.send_response(302)
+                self.send_header("Location", parsed.path + (f"?{rest}" if rest else ""))
+                self.send_header(
+                    "Set-Cookie",
+                    f"{TOKEN_COOKIE}={urllib.parse.quote(query['token'][0])}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000{secure}",
+                )
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return True
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            if 0 < length <= 65536:
+                self.rfile.read(length)
+        except Exception:
+            pass
+        if parsed.path.startswith("/api/"):
+            self.send_json({"ok": False, "error": "Odin token required"}, status=401)
+            return True
+        raw = (
+            "<!doctype html><meta charset=utf-8><title>Odin</title>"
+            "<p>This Odin server needs a token. Open <code>/?token=&lt;server.token&gt;</code> once on this device.</p>"
+        ).encode("utf-8")
+        self.send_response(401)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+        return True
+
     def send_json(self, payload: dict, status: int = 200):
         raw = localize_links(
             json.dumps(payload),
@@ -1485,8 +1574,14 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def do_HEAD(self):
+        # The base class would serve file headers without the GET checks.
+        if self._reject_foreign() or self._reject_unauthenticated():
+            return
+        super().do_HEAD()
+
     def do_OPTIONS(self):
-        if self._reject_foreign():
+        if self._reject_foreign() or self._reject_unauthenticated():
             return
         self.send_response(204)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -1498,7 +1593,7 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         clean_path = urllib.parse.unquote(parsed.path)
         query = urllib.parse.parse_qs(parsed.query)
 
-        if self._reject_foreign():
+        if self._reject_foreign() or self._reject_unauthenticated():
             return
 
         if clean_path == "/go":
@@ -1645,7 +1740,7 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
-        if self._reject_foreign(check_origin=True):
+        if self._reject_foreign(check_origin=True) or self._reject_unauthenticated():
             return
         if parsed.path == "/api/presence":
             try:
@@ -2361,7 +2456,16 @@ def main(argv: list[str] | None = None):
             print(f"Odin State Server listening on {scheme}://127.0.0.1:{PORT} (root: {ROOT_DIR})", flush=True)
             if host not in ("127.0.0.1", "localhost", "::1"):
                 for ip in lan_addresses():
-                    print(f"  On your network: {scheme}://{ip}:{PORT}/  (no authentication: anyone on this network has full access)", flush=True)
+                    print(f"  On your network: {scheme}://{ip}:{PORT}/", flush=True)
+                if CONFIG["server"].get("token"):
+                    print("  Other devices need server.token: open /?token=<token> once on each device.", flush=True)
+                else:
+                    print(
+                        "  WARNING: no server.token is set. Anyone who can reach this port can read and write\n"
+                        "  your repositories and approve, reject or wake the agent. Set server.token or ODIN_TOKEN.",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                 if scheme == "http":
                     print("  Warning: without TLS (server.cert/key), other devices can't use browser notifications.", flush=True)
             httpd.serve_forever()

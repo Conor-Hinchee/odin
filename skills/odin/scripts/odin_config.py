@@ -7,7 +7,7 @@ Config files are JSON and are deep-merged in this order (later wins):
   3. <workspace>/.odin/config.json
   4. $ODIN_CONFIG
 Environment overrides: ODIN_ROOT, ODIN_PORT, ODIN_STAGING_PORT, ODIN_HOST,
-ODIN_PRIMARY_REPO_DIR, ODIN_STAGING_DIR.
+ODIN_TOKEN, ODIN_PRIMARY_REPO_DIR, ODIN_STAGING_DIR.
 
 `python3 odin_config.py --url` prints the live server's base URL (https when TLS is configured).
 
@@ -17,6 +17,7 @@ See odin.config.example.json at the repository root for every key.
 import copy
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -31,7 +32,9 @@ DEFAULTS = {
     # cert/key: PEM files; when both are set the server speaks HTTPS.
     # allowed_hosts: extra Host header names to accept besides IPs, localhost,
     # *.local and this machine's hostname (DNS-rebinding guard).
-    "server": {"host": "127.0.0.1", "cert": None, "key": None, "allowed_hosts": []},
+    # token: shared secret required from non-loopback clients (also ODIN_TOKEN).
+    #   Direct loopback requests (CLI, hooks, a browser on this machine) never need it.
+    "server": {"host": "127.0.0.1", "cert": None, "key": None, "allowed_hosts": [], "token": None},
     # name -> {path, base_branch, port_range: [lo, hi], role: frontend|backend,
     #          start: "PORT={port} npm start", copy_paths: ["node_modules"]}
     "repos": {},
@@ -39,6 +42,9 @@ DEFAULTS = {
         {"id": "/code-review", "label": "/code-review", "desc": "Review the current diff for bugs"},
         {"id": "/simplify", "label": "/simplify", "desc": "Clean up the changed code"},
     ],
+    # Whether the dashboard's "+ /custom-skill" box may wake the agent with skills
+    # that aren't in skill_pills. Either way, only well-formed "/skill-name" values pass.
+    "skills_allow_custom": True,
     # {command: "my-cli --json", columns: [{key, label}], title}
     "telemetry": None,
     # {label, heading, require_prompt_summary, sanitize_hash_refs}
@@ -121,6 +127,7 @@ def load_config(workspace=None) -> dict:
 
     server = cfg["server"]
     server["host"] = os.environ.get("ODIN_HOST") or server.get("host") or "127.0.0.1"
+    server["token"] = (os.environ.get("ODIN_TOKEN") or server.get("token") or "").strip() or None
     for key in ("cert", "key"):
         if server.get(key):
             server[key] = os.path.abspath(os.path.expanduser(server[key]))
@@ -158,6 +165,38 @@ def render_ports(text: str, cfg: dict) -> str:
         .replace("8789", str(staging))
         .replace("\0ODIN_LIVE\0", str(live))
     )
+
+
+SKILL_NAME_RE = re.compile(r"^/[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
+def filter_selected_skills(skills, cfg: dict) -> tuple:
+    """Split dashboard-selected skills into (kept, dropped).
+
+    A wakeup's selectedSkills are invoked by the agent, so only bare "/skill-name"
+    values pass, and with skills_allow_custom off only ids listed in skill_pills.
+    """
+    allowed = {
+        (p.get("id") or p.get("label") or "") if isinstance(p, dict) else str(p)
+        for p in cfg.get("skill_pills") or []
+    }
+    allow_custom = cfg.get("skills_allow_custom", True) is not False
+    kept, dropped = [], []
+    for raw in skills or []:
+        name = (raw.get("id") or raw.get("name") or "") if isinstance(raw, dict) else str(raw)
+        name = name.strip()
+        if not name:
+            continue
+        ok = bool(SKILL_NAME_RE.match(name)) and (allow_custom or name in allowed)
+        (kept if ok else dropped).append(name)
+        if ok and kept.count(name) > 1:
+            kept.pop()
+    return kept, dropped
+
+
+def is_loopback_host(host: str) -> bool:
+    return (host or "").strip().lower() in LOOPBACK_HOSTS
 
 
 def tls_enabled(cfg: dict) -> bool:

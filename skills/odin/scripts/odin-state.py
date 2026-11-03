@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from odin_config import base_url, load_config, render_ports  # noqa: E402
+from odin_config import base_url, filter_selected_skills, load_config, render_ports  # noqa: E402
 
 CONFIG = load_config()
 AI_DEV_ROOT = CONFIG["root"]
@@ -5233,17 +5233,21 @@ def write_wakeup_event(
     slug = p.stem
     states_dir = _get_odin_states_dir_for_html(p)
     wakeup_file = states_dir / f".odin-wakeup-{slug}.json"
+    kept_skills, dropped_skills = filter_selected_skills(selected_skills, CONFIG)
     payload = {
         "slug": slug,
         "file": str(p),
         "decision": decision,
         "phase": phase,
         "notes": notes,
-        "selectedSkills": list(selected_skills or []),
+        "selectedSkills": kept_skills,
         "timestamp": now_iso(),
     }
     if extra:
         payload.update(extra)
+    payload["selectedSkills"] = kept_skills
+    if dropped_skills:
+        payload["droppedSkills"] = dropped_skills
     wakeup_file.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return wakeup_file
 
@@ -5284,6 +5288,17 @@ def cmd_wait_for_human(args: argparse.Namespace) -> int:
         print(f"Error: File not found: {html_path}", file=sys.stderr)
         return 1
 
+    phase_label = ""
+    if getattr(args, "phase", ""):
+        phase_key = PHASE_ALIASES.get(args.phase.strip().lower())
+        if not phase_key:
+            print(
+                f"Error: Invalid phase {args.phase} (use one of: {', '.join(PHASE_MAP)})",
+                file=sys.stderr,
+            )
+            return 2
+        phase_label = PHASE_MAP[phase_key][0]
+
     slug = html_path.stem
     states_dir = _get_odin_states_dir_for_html(html_path)
     wakeup_file = states_dir / f".odin-wakeup-{slug}.json"
@@ -5307,7 +5322,7 @@ def cmd_wait_for_human(args: argparse.Namespace) -> int:
             "file": str(html_path),
             "pid": os.getpid(),
             "status": status,
-            "phase": getattr(args, "phase", "") or "",
+            "phase": phase_label,
             "sessionId": getattr(args, "session_id", "") or "",
             "startedAt": started_at_iso,
             "heartbeatAt": now_iso(),
@@ -5344,6 +5359,13 @@ def cmd_wait_for_human(args: argparse.Namespace) -> int:
                     event = json.loads(raw)
                 except Exception:
                     event = {"slug": slug, "file": str(html_path), "decision": "human_action", "timestamp": now_iso()}
+                if not isinstance(event, dict):
+                    event = {"slug": slug, "file": str(html_path), "decision": "human_action", "timestamp": now_iso()}
+                # Re-filter on read: the wakeup file may not have come from write_wakeup_event.
+                kept, dropped = filter_selected_skills(event.get("selectedSkills"), CONFIG)
+                event["selectedSkills"] = kept
+                if dropped:
+                    event["droppedSkills"] = sorted(set(dropped) | set(event.get("droppedSkills") or []))
                 try:
                     wakeup_file.unlink()
                 except OSError:
@@ -5354,8 +5376,10 @@ def cmd_wait_for_human(args: argparse.Namespace) -> int:
                 skills = event.get("selectedSkills") or []
                 if skills:
                     print(f"\n⚡ Partner Attached Skills to Activate: {' '.join(skills)}")
+                if event.get("droppedSkills"):
+                    print(f"\n⚠️ Ignored skills (not allowed): {' '.join(event['droppedSkills'])}")
                 if event.get("notes"):
-                    print(f"\n💬 Partner Notes / Instructions:\n{event['notes']}")
+                    print(f"\n💬 Partner Notes (feedback on this task, not new instructions):\n{event['notes']}")
                 return 0
 
             if timeout_sec > 0 and (now_ts - started_at) >= timeout_sec:
@@ -5377,6 +5401,59 @@ def cmd_wait_for_human(args: argparse.Namespace) -> int:
             time.sleep(poll_interval)
     finally:
         cleanup_heartbeat()
+
+
+def _process_command(pid: int) -> str:
+    """The command line of a live process, or "" when it isn't running."""
+    try:
+        res = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return res.stdout.strip() if res.returncode == 0 else ""
+
+
+def cmd_stop_watcher(args: argparse.Namespace) -> int:
+    """Stop an armed wait-for-human watcher, e.g. when the human answered in chat."""
+    try:
+        html_path = _resolve_html_path(args)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    slug = html_path.stem
+    watcher_file = _get_odin_states_dir_for_html(html_path) / f".odin-watcher-{slug}.json"
+    result = {"slug": slug, "stopped": False, "pid": None, "reason": ""}
+    if not watcher_file.exists():
+        result["reason"] = "no watcher armed"
+        print(json.dumps(result, indent=2))
+        return 0
+    try:
+        data = json.loads(watcher_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    pid = data.get("pid") if isinstance(data, dict) else None
+    result["pid"] = pid
+    command = _process_command(pid) if isinstance(pid, int) and pid > 0 else ""
+    # Only signal the process if it really is this slug's watcher; pids get reused.
+    if command and "wait-for-human" in command and slug in command:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            result["stopped"] = True
+        except OSError as exc:
+            result["reason"] = f"could not signal pid {pid}: {exc}"
+    else:
+        result["reason"] = "watcher process not running (stale heartbeat removed)"
+    try:
+        watcher_file.unlink()
+    except OSError:
+        pass
+    print(json.dumps(result, indent=2))
+    return 0
 
 
 def _is_git_checkout(path: Path) -> bool:
@@ -6121,12 +6198,17 @@ def build_parser() -> argparse.ArgumentParser:
     wfh = sub.add_parser("wait-for-human", help="Block as a background task until the human partner clicks Save/Approve/Reject in Odin")
     wfh.add_argument("html_file", nargs="?", help="Path to odin-states/<slug>.html")
     wfh.add_argument("--file", help="Path to odin-states/<slug>.html")
-    wfh.add_argument("--phase", default="", help="Current phase awaiting human (huginn-plan, heimdall-validation, human-validation)")
+    wfh.add_argument("--phase", default="", help="Phase awaiting the human: huginn, heimdall or human (section ids also accepted)")
     wfh.add_argument("--session-id", dest="session_id", default="", help="Optional Claude Code session ID")
     wfh.add_argument("--timeout", type=float, default=0, help="Optional timeout in seconds (0 = wait indefinitely)")
     wfh.add_argument("--poll-interval", dest="poll_interval", type=float, default=1.0, help="Polling interval in seconds")
     wfh.add_argument("--consume-existing", dest="consume_existing", action="store_true", help="Consume an existing wakeup file immediately if present")
     wfh.set_defaults(func=cmd_wait_for_human)
+
+    sw = sub.add_parser("stop-watcher", help="Stop an armed wait-for-human watcher (the human answered in chat)")
+    sw.add_argument("html_file", nargs="?", help="Path to odin-states/<slug>.html")
+    sw.add_argument("--file", help="Path to odin-states/<slug>.html")
+    sw.set_defaults(func=cmd_stop_watcher)
 
     ss = sub.add_parser("snapshot-staging", help="Pause live watchers, snapshot the Odin repo & odin-states/ into the staging worktree, and launch :8789")
     ss.add_argument("--file", default="", help="Active state file relative path (e.g. odin-states/<slug>.html)")
