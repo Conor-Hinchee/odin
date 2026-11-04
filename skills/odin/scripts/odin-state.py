@@ -885,10 +885,20 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
         window.__odinStickyDiffReviewV2 = true;
         const REVIEW_STORAGE_KEY = `odin_diff_review_${relId}`;
         const APPROVED_STORAGE_KEY = `odin_diff_approved_${relId}`;
+        const UNIFIED_LINE_THRESHOLD = 100;
 
         const syncStickyHeaderOffset = () => {
           const topBar = document.querySelector(".odin-topbar, .odin-header");
-          const h = topBar ? Math.ceil(topBar.getBoundingClientRect().height) : 0;
+          let h = 0;
+          if (topBar) {
+            const pos = window.getComputedStyle(topBar).position;
+            if (pos === "sticky" || pos === "fixed") {
+              const rect = topBar.getBoundingClientRect();
+              if (rect.bottom > 0 && rect.top <= 4) {
+                h = Math.ceil(rect.height);
+              }
+            }
+          }
           document.documentElement.style.setProperty("--odin-sticky-top-offset", `${Math.max(0, h)}px`);
           return h;
         };
@@ -902,9 +912,82 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
               return;
             }
             const sRect = sum.getBoundingClientRect();
+            const sumHeight = Math.max(36, Math.round(sRect.height));
+            card.style.setProperty("--odin-file-summary-height", `${sumHeight}px`);
             const cRect = card.getBoundingClientRect();
             const isStuck = Math.abs(sRect.top - offset) <= 3 && cRect.top < offset - 4 && cRect.bottom > sRect.bottom + 16;
             sum.classList.toggle("is-stuck", isStuck);
+          });
+        };
+
+        const updateFileModeButtonLabel = (card) => {
+          const btn = card.querySelector("[data-odin-toggle-file-mode]");
+          if (!btn) return;
+          const mode = card.getAttribute("data-view-mode") || "split";
+          const defaultMode = card.getAttribute("data-default-view-mode") || "split";
+          const changed = parseInt(card.getAttribute("data-changed-lines") || "0", 10) || 0;
+          btn.setAttribute("data-view-mode", mode);
+          if (mode === "unified") {
+            btn.textContent = defaultMode === "unified" ? `☰ Unified (${changed} lines)` : "☰ Unified";
+          } else {
+            btn.textContent = "◫ Split";
+          }
+        };
+
+        const syncToolbarActiveModeBtn = (viewer) => {
+          if (!viewer) return;
+          const vMode = viewer.getAttribute("data-view-mode") || "auto";
+          viewer.querySelectorAll("[data-mode-btn]").forEach((b) => {
+            b.classList.toggle("active", b.dataset.modeBtn === vMode);
+          });
+        };
+
+        const syncPerFileDiffViewModes = () => {
+          document.querySelectorAll(".odin-diff-viewer").forEach((viewer) => {
+            const modeGroup = viewer.querySelector(".odin-diff-mode-group");
+            if (modeGroup && !modeGroup.querySelector('[data-mode-btn="auto"]')) {
+              const autoBtn = document.createElement("button");
+              autoBtn.type = "button";
+              autoBtn.className = "odin-diff-btn";
+              autoBtn.setAttribute("data-mode-btn", "auto");
+              autoBtn.textContent = "⚡ Auto (100+ Lines → Unified)";
+              modeGroup.insertBefore(autoBtn, modeGroup.firstChild);
+            }
+            if (!viewer.hasAttribute("data-odin-modes-initialized")) {
+              viewer.setAttribute("data-odin-modes-initialized", "true");
+              viewer.setAttribute("data-view-mode", "auto");
+            }
+            viewer.querySelectorAll("details.odin-diff-file-card").forEach((card) => {
+              let changed = parseInt(card.getAttribute("data-changed-lines") || "-1", 10);
+              if (changed < 0 || Number.isNaN(changed)) {
+                const addEl = card.querySelector(":scope > summary .odin-diff-stat-add");
+                const delEl = card.querySelector(":scope > summary .odin-diff-stat-del");
+                const adds = parseInt((addEl?.textContent || "").replace(/[^0-9]/g, ""), 10) || 0;
+                const dels = parseInt((delEl?.textContent || "").replace(/[^0-9]/g, ""), 10) || 0;
+                changed = adds + dels;
+                card.setAttribute("data-changed-lines", String(changed));
+              }
+              const defaultMode = changed >= UNIFIED_LINE_THRESHOLD ? "unified" : "split";
+              if (!card.hasAttribute("data-default-view-mode")) {
+                card.setAttribute("data-default-view-mode", defaultMode);
+              }
+              if (!card.hasAttribute("data-view-mode")) {
+                card.setAttribute("data-view-mode", defaultMode);
+              }
+              const sumInner = card.querySelector(":scope > summary .odin-diff-file-summary-inner");
+              if (sumInner && !sumInner.querySelector("[data-odin-toggle-file-mode]")) {
+                const metaGroups = sumInner.querySelectorAll(".odin-diff-file-meta");
+                const actionGroup = metaGroups[metaGroups.length - 1] || sumInner;
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.className = "odin-diff-action-btn odin-diff-file-mode-btn";
+                btn.setAttribute("data-odin-toggle-file-mode", card.getAttribute("data-file-path") || "");
+                btn.title = `Toggle Side-by-Side (Split) vs. Unified view for this file (${changed} changed lines)`;
+                actionGroup.insertBefore(btn, actionGroup.firstChild);
+              }
+              updateFileModeButtonLabel(card);
+            });
+            syncToolbarActiveModeBtn(viewer);
           });
         };
 
@@ -922,7 +1005,7 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
           if (!sum) return fallback;
           const sumBottom = sum.getBoundingClientRect().bottom;
           const viewer = card.closest(".odin-diff-viewer");
-          const mode = viewer?.getAttribute("data-view-mode") || "split";
+          const mode = card.getAttribute("data-view-mode") || viewer?.getAttribute("data-view-mode") || "split";
           const tblSelector = mode === "unified" ? "table.odin-diff-unified-table" : "table.odin-diff-split-table";
           const rows = card.querySelectorAll(`${tblSelector} tr.odin-diff-row`);
           for (const r of rows) {
@@ -1147,33 +1230,35 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
                 }
               });
 
-              const anchorRow =
-                card.querySelector(`tr.odin-diff-row[data-line="${CSS.escape(String(endLine))}"]`) ||
-                card.querySelector(`tr.odin-diff-row[data-line="${CSS.escape(String(startLine))}"]`);
+              card.querySelectorAll("table.odin-diff-split-table, table.odin-diff-unified-table").forEach((tbl) => {
+                const anchorRow =
+                  tbl.querySelector(`tr.odin-diff-row[data-line="${CSS.escape(String(endLine))}"]`) ||
+                  tbl.querySelector(`tr.odin-diff-row[data-line="${CSS.escape(String(startLine))}"]`);
 
-              if (anchorRow) {
-                const colSpan = anchorRow.children.length || 4;
-                const tr = document.createElement("tr");
-                tr.className = "odin-diff-saved-comment-row";
-                tr.setAttribute("data-odin-transient", "true");
-                tr.setAttribute("data-comment-id", item.id);
-                const lineLabel = startLine === endLine ? String(startLine) : `${startLine}-${endLine}`;
-                tr.innerHTML = `<td colspan="${colSpan}">
-                  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;">
-                    <div>
-                      <div style="font-size:0.75rem;font-weight:800;color:#c084fc;margin-bottom:0.2rem;">
-                        💬 Code Review Comment on <code>${escapeHtml(item.repo ? item.repo + "/" + item.filePath : item.filePath)}:${escapeHtml(lineLabel)}</code>
+                if (anchorRow) {
+                  const colSpan = anchorRow.children.length || 4;
+                  const tr = document.createElement("tr");
+                  tr.className = "odin-diff-saved-comment-row";
+                  tr.setAttribute("data-odin-transient", "true");
+                  tr.setAttribute("data-comment-id", item.id);
+                  const lineLabel = startLine === endLine ? String(startLine) : `${startLine}-${endLine}`;
+                  tr.innerHTML = `<td colspan="${colSpan}">
+                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;">
+                      <div>
+                        <div style="font-size:0.75rem;font-weight:800;color:#c084fc;margin-bottom:0.2rem;">
+                          💬 Code Review Comment on <code>${escapeHtml(item.repo ? item.repo + "/" + item.filePath : item.filePath)}:${escapeHtml(lineLabel)}</code>
+                        </div>
+                        <div style="font-size:0.84rem;color:#f8fafc;white-space:pre-wrap;line-height:1.45;">${escapeHtml(item.comment)}</div>
                       </div>
-                      <div style="font-size:0.84rem;color:#f8fafc;white-space:pre-wrap;line-height:1.45;">${escapeHtml(item.comment)}</div>
+                      <div style="display:flex;gap:0.4rem;">
+                        <button type="button" class="odin-diff-action-btn odin-diff-comment-btn" data-odin-edit-comment="${escapeHtml(item.id)}">✏️ Edit</button>
+                        <button type="button" class="odin-diff-action-btn" style="color:#fb7185;border:1px solid rgba(244,63,94,0.45);background:rgba(244,63,94,0.14);" data-odin-delete-comment="${escapeHtml(item.id)}">🗑️ Remove</button>
+                      </div>
                     </div>
-                    <div style="display:flex;gap:0.4rem;">
-                      <button type="button" class="odin-diff-action-btn odin-diff-comment-btn" data-odin-edit-comment="${escapeHtml(item.id)}">✏️ Edit</button>
-                      <button type="button" class="odin-diff-action-btn" style="color:#fb7185;border:1px solid rgba(244,63,94,0.45);background:rgba(244,63,94,0.14);" data-odin-delete-comment="${escapeHtml(item.id)}">🗑️ Remove</button>
-                    </div>
-                  </div>
-                </td>`;
-                anchorRow.insertAdjacentElement("afterend", tr);
-              }
+                  </td>`;
+                  anchorRow.insertAdjacentElement("afterend", tr);
+                }
+              });
             });
           });
         };
@@ -1449,6 +1534,37 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
             return;
           }
 
+          const toggleFileModeBtn = ev.target.closest("[data-odin-toggle-file-mode]");
+          if (toggleFileModeBtn) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const card = toggleFileModeBtn.closest("details.odin-diff-file-card");
+            if (!card) return;
+            const cur = card.getAttribute("data-view-mode") || "split";
+            const next = cur === "unified" ? "split" : "unified";
+            card.setAttribute("data-view-mode", next);
+            updateFileModeButtonLabel(card);
+            return;
+          }
+
+          const globalModeBtn = ev.target.closest("[data-mode-btn]");
+          if (globalModeBtn) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const viewer = globalModeBtn.closest(".odin-diff-viewer");
+            if (!viewer) return;
+            const targetMode = globalModeBtn.getAttribute("data-mode-btn") || "auto";
+            viewer.setAttribute("data-view-mode", targetMode);
+            viewer.setAttribute("data-odin-modes-initialized", "true");
+            viewer.querySelectorAll("details.odin-diff-file-card").forEach((card) => {
+              const defMode = card.getAttribute("data-default-view-mode") || "split";
+              card.setAttribute("data-view-mode", targetMode === "auto" ? defMode : targetMode);
+              updateFileModeButtonLabel(card);
+            });
+            syncToolbarActiveModeBtn(viewer);
+            return;
+          }
+
           const approveFileBtn = ev.target.closest("[data-odin-approve-file]");
           if (approveFileBtn) {
             ev.preventDefault();
@@ -1673,6 +1789,8 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
                     }
                   }
                   window.__odinCoEditActive = Boolean(document.querySelector(".odin-inline-file-editor"));
+                  syncPerFileDiffViewModes();
+                  syncStuckFileSummaries();
                   renderSavedComments();
                   renderApprovedFiles();
                 } catch (sErr) {
@@ -1748,10 +1866,12 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
         });
 
         const initReviewUI = () => {
+          syncPerFileDiffViewModes();
           syncStuckFileSummaries();
           renderSavedComments();
           renderApprovedFiles();
         };
+        window.__odinRefreshDiffReviewUI = initReviewUI;
         if (document.readyState === "loading") {
           document.addEventListener("DOMContentLoaded", initReviewUI);
         } else {
@@ -1930,7 +2050,10 @@ ODIN_SAFE_POLLER_FN = """      const lastServerSnapshots = {};
               }
             });
 
-            if (changed) syncStepperAndDiff(true);
+            if (changed) {
+              syncStepperAndDiff(true);
+              if (typeof window.__odinRefreshDiffReviewUI === "function") window.__odinRefreshDiffReviewUI();
+            }
             return;
           } catch {}
         }
@@ -1991,6 +2114,9 @@ ODIN_LIGHT_THEME_STYLES = """<style id="odin-light-theme-fixes">
     html[data-theme="light"] .open-questions-box { background: rgba(245, 158, 11, 0.12); border-color: rgba(217, 119, 6, 0.55); color: #78350f; }
     html[data-theme="light"] details.odin-iteration-card > summary { background: var(--surface-elevated); color: var(--text); }
     html[data-theme="light"] #odin-env-bar > span { color: var(--text) !important; }
+    /* Top page header scrolls naturally; iteration cards use overflow:clip so sticky file diff headers work */
+    .odin-header, .odin-topbar { position: relative !important; top: auto !important; }
+    details.odin-iteration-card { overflow: clip !important; }
     /* Keep dark code diff surface readable in both light and dark page themes */
     html[data-theme="light"] .odin-diff-viewer {
       color-scheme: dark;
@@ -3222,6 +3348,13 @@ def cmd_step_back(args: argparse.Namespace) -> int:
 
 ODIN_DIFF_STYLES = """<style id="odin-diff-styles">
   /* Odin Contextual Code Diff, Inline Review & File Editor */
+  .odin-header, .odin-topbar {
+    position: relative !important;
+    top: auto !important;
+  }
+  details.odin-iteration-card {
+    overflow: clip !important;
+  }
   .odin-diff-viewer {
     margin: 1rem 0 0.5rem;
     border: 1px solid rgba(56, 189, 248, 0.35);
@@ -3353,7 +3486,7 @@ ODIN_DIFF_STYLES = """<style id="odin-diff-styles">
     cursor: pointer;
     list-style: none;
     position: sticky;
-    top: var(--odin-sticky-top-offset, 48px);
+    top: var(--odin-sticky-top-offset, 0px);
     z-index: 35;
     container-type: scroll-state;
     container-name: odin-diff-file-header;
@@ -3476,9 +3609,23 @@ ODIN_DIFF_STYLES = """<style id="odin-diff-styles">
   .odin-diff-editor-link:hover {
     background: rgba(56, 189, 248, 0.22);
   }
+  .odin-diff-file-mode-btn {
+    color: #38bdf8 !important;
+    background: rgba(56, 189, 248, 0.14);
+    border: 1px solid rgba(56, 189, 248, 0.42);
+  }
+  .odin-diff-file-mode-btn:hover {
+    background: rgba(56, 189, 248, 0.26);
+    border-color: #38bdf8;
+  }
+  .odin-diff-file-mode-btn[data-view-mode="unified"] {
+    color: #fbbf24 !important;
+    background: rgba(245, 158, 11, 0.16);
+    border-color: rgba(245, 158, 11, 0.48);
+  }
   .odin-file-comment-drawer {
     position: sticky;
-    top: calc(var(--odin-sticky-top-offset, 48px) + 44px);
+    top: calc(var(--odin-sticky-top-offset, 0px) + var(--odin-file-summary-height, 44px));
     z-index: 34;
     padding: 0.75rem 1.05rem;
     background: rgba(15, 23, 42, 0.98) !important;
@@ -3500,10 +3647,16 @@ ODIN_DIFF_STYLES = """<style id="odin-diff-styles">
     color: #38bdf8 !important;
   }
   .odin-diff-hunk-header {
+    position: sticky;
+    top: calc(var(--odin-sticky-top-offset, 0px) + var(--odin-file-summary-height, 44px));
+    z-index: 32;
     padding: 0.35rem 0.9rem;
-    background: rgba(30, 41, 59, 0.85) !important;
+    background: rgba(15, 23, 42, 0.95) !important;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     border-top: 1px solid #1e293b;
-    border-bottom: 1px solid #1e293b;
+    border-bottom: 1px solid rgba(56, 189, 248, 0.3);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
     font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 0.75rem;
     color: #cbd5e1 !important;
@@ -3532,8 +3685,15 @@ ODIN_DIFF_STYLES = """<style id="odin-diff-styles">
     table-layout: fixed;
     background: #070b14 !important;
   }
-  .odin-diff-viewer[data-view-mode="split"] .odin-diff-unified-table { display: none; }
-  .odin-diff-viewer[data-view-mode="unified"] .odin-diff-split-table { display: none; }
+  .odin-diff-file-card[data-view-mode="split"] .odin-diff-unified-table,
+  .odin-diff-viewer[data-view-mode="split"] .odin-diff-file-card:not([data-view-mode]) .odin-diff-unified-table,
+  .odin-diff-viewer[data-view-mode="auto"] .odin-diff-file-card:not([data-view-mode]) .odin-diff-unified-table {
+    display: none;
+  }
+  .odin-diff-file-card[data-view-mode="unified"] .odin-diff-split-table,
+  .odin-diff-viewer[data-view-mode="unified"] .odin-diff-file-card:not([data-view-mode]) .odin-diff-split-table {
+    display: none;
+  }
   .odin-diff-viewer table.odin-diff-split-table td,
   .odin-diff-viewer table.odin-diff-unified-table td {
     border: none !important;
@@ -3730,7 +3890,64 @@ ODIN_DIFF_STYLES = """<style id="odin-diff-styles">
 </style>"""
 
 
+ODIN_DIFF_UNIFIED_LINE_THRESHOLD = 100
+
+
+def _upgrade_existing_diff_cards_in_html(content: str) -> str:
+    """Ensure existing <details class="odin-diff-file-card"> blocks carry per-file data-view-mode based on the 100-line threshold."""
+    if "odin-diff-file-card" not in content:
+        return content
+
+    content = re.sub(
+        r'(<div\b[^>]*\bclass=["\'][^"\']*\bodin-diff-viewer\b[^"\']*["\'][^>]*?)\bdata-view-mode=["\']split["\'](?![^>]*\bdata-unified-threshold=)',
+        rf'\1data-view-mode="auto" data-unified-threshold="{ODIN_DIFF_UNIFIED_LINE_THRESHOLD}"',
+        content,
+        flags=re.IGNORECASE,
+    )
+
+    def _patch_card(m: re.Match) -> str:
+        open_tag = m.group(1)
+        summary_block = m.group(2)
+        if "data-view-mode=" in open_tag:
+            return m.group(0)
+        add_m = re.search(r'class=["\'][^"\']*\bodin-diff-stat-add\b[^"\']*["\'][^>]*>\+?(\d+)<', summary_block, re.IGNORECASE)
+        del_m = re.search(r'class=["\'][^"\']*\bodin-diff-stat-del\b[^"\']*["\'][^>]*>-?(\d+)<', summary_block, re.IGNORECASE)
+        adds = int(add_m.group(1)) if add_m else 0
+        dels = int(del_m.group(1)) if del_m else 0
+        changed = adds + dels
+        mode = "unified" if changed >= ODIN_DIFF_UNIFIED_LINE_THRESHOLD else "split"
+        label = f"☰ Unified ({changed} lines)" if mode == "unified" else "◫ Split"
+        fp_m = re.search(r'\bdata-file-path=["\']([^"\']*)["\']', open_tag, re.IGNORECASE)
+        fp_esc = fp_m.group(1) if fp_m else ""
+        patched_open = (
+            open_tag[:-1]
+            + f' data-view-mode="{mode}" data-default-view-mode="{mode}" data-changed-lines="{changed}">'
+        )
+        if "data-odin-toggle-file-mode" not in summary_block:
+            btn_html = (
+                f'<button type="button" class="odin-diff-action-btn odin-diff-file-mode-btn" '
+                f'data-odin-toggle-file-mode="{fp_esc}" data-view-mode="{mode}" '
+                f'title="Toggle Side-by-Side (Split) vs. Unified view for this file ({changed} changed lines)">{label}</button>'
+            )
+            summary_block = re.sub(
+                r'(<button\b[^>]*\bdata-odin-approve-file=)',
+                lambda bm: btn_html + bm.group(1),
+                summary_block,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+        return patched_open + summary_block
+
+    return re.sub(
+        r'(<details\b[^>]*\bclass=["\'][^"\']*\bodin-diff-file-card\b[^"\']*["\'][^>]*>)(\s*<summary>[\s\S]*?</summary>)',
+        _patch_card,
+        content,
+        flags=re.IGNORECASE,
+    )
+
+
 def ensure_diff_styles(content: str) -> str:
+    content = _upgrade_existing_diff_cards_in_html(content)
     style_pat = re.compile(
         r'\s*<style[^>]*id=["\']odin-diff-styles["\'][^>]*>[\s\S]*?</style>',
         re.IGNORECASE,
@@ -4091,7 +4308,7 @@ def generate_contextual_diff_html(
     rationale_esc = html_mod.escape(rationale or "")
     notes_json_esc = html_mod.escape(json.dumps(file_notes or {}))
     parts.append(
-        f'<div class="odin-diff-viewer" data-view-mode="split" data-worktree="{worktree_esc}" '
+        f'<div class="odin-diff-viewer" data-view-mode="auto" data-unified-threshold="{ODIN_DIFF_UNIFIED_LINE_THRESHOLD}" data-worktree="{worktree_esc}" '
         f'data-repo="{html_mod.escape(repo_name)}" data-context-lines="{context_lines}" '
         f'data-rationale="{rationale_esc}" data-file-notes="{notes_json_esc}">'
     )
@@ -4105,11 +4322,14 @@ def generate_contextual_diff_html(
         f'<span style="font-size:0.74rem;color:#94a3b8;font-weight:500;">• {html_mod.escape(diff_source_label)} • {context_lines}-line deep context • Sticky file header &amp; click any line to comment</span>'
         "</div>"
         '<div class="odin-diff-mode-group">'
-        '<button type="button" class="odin-diff-btn active" data-mode-btn="split" '
-        'onclick="const v=this.closest(\'.odin-diff-viewer\');v.setAttribute(\'data-view-mode\',\'split\');v.querySelectorAll(\'[data-mode-btn]\').forEach(b=>b.classList.toggle(\'active\',b.dataset.modeBtn===\'split\'));">'
+        '<button type="button" class="odin-diff-btn active" data-mode-btn="auto" '
+        'onclick="const v=this.closest(\'.odin-diff-viewer\');v.setAttribute(\'data-view-mode\',\'auto\');v.querySelectorAll(\'details.odin-diff-file-card\').forEach(c=>c.setAttribute(\'data-view-mode\',c.getAttribute(\'data-default-view-mode\')||\'split\'));v.querySelectorAll(\'[data-mode-btn]\').forEach(b=>b.classList.toggle(\'active\',b.dataset.modeBtn===\'auto\'));">'
+        f"⚡ Auto ({ODIN_DIFF_UNIFIED_LINE_THRESHOLD}+ Lines → Unified)</button>"
+        '<button type="button" class="odin-diff-btn" data-mode-btn="split" '
+        'onclick="const v=this.closest(\'.odin-diff-viewer\');v.setAttribute(\'data-view-mode\',\'split\');v.querySelectorAll(\'details.odin-diff-file-card\').forEach(c=>c.setAttribute(\'data-view-mode\',\'split\'));v.querySelectorAll(\'[data-mode-btn]\').forEach(b=>b.classList.toggle(\'active\',b.dataset.modeBtn===\'split\'));">'
         "◫ Side-by-Side (Split)</button>"
         '<button type="button" class="odin-diff-btn" data-mode-btn="unified" '
-        'onclick="const v=this.closest(\'.odin-diff-viewer\');v.setAttribute(\'data-view-mode\',\'unified\');v.querySelectorAll(\'[data-mode-btn]\').forEach(b=>b.classList.toggle(\'active\',b.dataset.modeBtn===\'unified\'));">'
+        'onclick="const v=this.closest(\'.odin-diff-viewer\');v.setAttribute(\'data-view-mode\',\'unified\');v.querySelectorAll(\'details.odin-diff-file-card\').forEach(c=>c.setAttribute(\'data-view-mode\',\'unified\'));v.querySelectorAll(\'[data-mode-btn]\').forEach(b=>b.classList.toggle(\'active\',b.dataset.modeBtn===\'unified\'));">'
         "☰ Unified Diff</button>"
         '<button type="button" class="odin-diff-btn" '
         'onclick="const v=this.closest(\'.odin-diff-viewer\');const cards=v.querySelectorAll(\'details.odin-diff-file-card\');const anyOpen=Array.from(cards).some(c=>c.open);cards.forEach(c=>c.open=!anyOpen);">'
@@ -4133,6 +4353,9 @@ def generate_contextual_diff_html(
         vscode_url = f"vscode://file/{abs_path}:{first_line}"
         file_url = f"file://{abs_path}"
         repo_rel_key = f"{repo_name}/{rel_path}"
+        file_changed_lines = fobj["adds"] + fobj["dels"]
+        file_default_mode = "unified" if file_changed_lines >= ODIN_DIFF_UNIFIED_LINE_THRESHOLD else "split"
+        file_mode_label = f"☰ Unified ({file_changed_lines} lines)" if file_default_mode == "unified" else "◫ Split"
 
         # Match file note by repo/rel_path, exact rel_path, or basename
         note_html = ""
@@ -4142,7 +4365,7 @@ def generate_contextual_diff_html(
                 break
 
         parts.append(
-            f'<details class="odin-diff-file-card" open data-worktree="{worktree_esc}" data-repo="{html_mod.escape(repo_name)}" data-file-path="{rel_path_esc}" data-first-line="{first_line}">'
+            f'<details class="odin-diff-file-card" open data-worktree="{worktree_esc}" data-repo="{html_mod.escape(repo_name)}" data-file-path="{rel_path_esc}" data-first-line="{first_line}" data-view-mode="{file_default_mode}" data-default-view-mode="{file_default_mode}" data-changed-lines="{file_changed_lines}">'
             f"<summary>"
             f'<div class="odin-diff-file-summary-inner">'
             f'<div class="odin-diff-file-meta">'
@@ -4152,6 +4375,7 @@ def generate_contextual_diff_html(
             f'<span class="odin-diff-line-hint">📌 Sticky Header • 💬 Click any line to comment</span>'
             f"</div>"
             f'<div class="odin-diff-file-meta">'
+            f'<button type="button" class="odin-diff-action-btn odin-diff-file-mode-btn" data-odin-toggle-file-mode="{rel_path_esc}" data-view-mode="{file_default_mode}" title="Toggle Side-by-Side (Split) vs. Unified view for this file ({file_changed_lines} changed lines)">{file_mode_label}</button>'
             f'<button type="button" class="odin-diff-action-btn odin-diff-approve-btn" data-odin-approve-file="{rel_path_esc}" data-repo="{html_mod.escape(repo_name)}" aria-pressed="false">☑️ Approve File</button>'
             f'<button type="button" class="odin-diff-action-btn odin-diff-comment-btn" data-odin-comment-file="{rel_path_esc}" data-repo="{html_mod.escape(repo_name)}" data-first-line="{first_line}">💬 Comment on File</button>'
             f'<a class="odin-diff-editor-link" href="{html_mod.escape(vscode_url)}" onclick="event.stopPropagation();">⚡ IDE (L{first_line})</a>'

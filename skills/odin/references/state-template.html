@@ -75,10 +75,9 @@
       text-wrap: pretty;
     }
 
-    /* Sticky Asgardian Top Command Bar */
+    /* Asgardian Top Command Bar (non-sticky so file diff headers own the sticky viewport top) */
     .odin-header {
-      position: sticky;
-      top: 0;
+      position: relative;
       z-index: 40;
       backdrop-filter: blur(16px);
       background: color-mix(in srgb, var(--surface) 85%, transparent);
@@ -336,7 +335,7 @@
       border: 1px solid var(--border);
       border-radius: 12px;
       margin: 0.85rem 0;
-      overflow: hidden;
+      overflow: clip;
     }
 
     details.odin-iteration-card[open] {
