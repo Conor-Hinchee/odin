@@ -844,6 +844,69 @@ class TestOdin(unittest.TestCase):
         )
         self.assertIn('data-app-port=""', external_html)
 
+    def test_non_sticky_page_header_sticky_file_hunk_and_100_line_unified_threshold(self):
+        import subprocess
+
+        state_tpl = (ODIN_ROOT / "references" / "state-template.html").read_text(encoding="utf-8")
+        self.assertIn(".odin-header {\n      position: relative;\n      z-index: 40;", state_tpl)
+        self.assertIn("details.odin-iteration-card {\n      background: var(--surface-elevated);\n      border: 1px solid var(--border);\n      border-radius: 12px;\n      margin: 0.85rem 0;\n      overflow: clip;", state_tpl)
+
+        diff_styles = self.odin_state.ODIN_DIFF_STYLES
+        self.assertIn("position: relative !important;", diff_styles)
+        self.assertIn("overflow: clip !important;", diff_styles)
+        self.assertIn("top: var(--odin-sticky-top-offset, 0px);", diff_styles)
+        self.assertIn("top: calc(var(--odin-sticky-top-offset, 0px) + var(--odin-file-summary-height, 44px));", diff_styles)
+        self.assertIn('.odin-diff-file-card[data-view-mode="split"] .odin-diff-unified-table', diff_styles)
+        self.assertIn('.odin-diff-file-card[data-view-mode="unified"] .odin-diff-split-table', diff_styles)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-b", "main"], cwd=str(repo), check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=str(repo), check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(repo), check=True, capture_output=True)
+
+            (repo / "small.py").write_text("x = 1\n", encoding="utf-8")
+            (repo / "large.py").write_text("y = 1\n", encoding="utf-8")
+            subprocess.run(["git", "add", "small.py", "large.py"], cwd=str(repo), check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), check=True, capture_output=True)
+
+            # Modify small.py (< 100 changed lines -> split) and large.py (>= 100 changed lines -> unified)
+            (repo / "small.py").write_text("\n".join(f"x_{i} = {i}" for i in range(15)) + "\n", encoding="utf-8")
+            (repo / "large.py").write_text("\n".join(f"y_{i} = {i}" for i in range(110)) + "\n", encoding="utf-8")
+
+            diff_html = self.odin_state.generate_contextual_diff_html(str(repo))
+            self.assertIn('data-view-mode="auto" data-unified-threshold="100"', diff_html)
+            self.assertIn('data-mode-btn="auto"', diff_html)
+            self.assertIn('data-file-path="small.py" data-first-line="1" data-view-mode="split" data-default-view-mode="split" data-changed-lines="16"', diff_html)
+            self.assertIn('data-file-path="large.py" data-first-line="1" data-view-mode="unified" data-default-view-mode="unified" data-changed-lines="111"', diff_html)
+            self.assertIn('data-odin-toggle-file-mode="small.py" data-view-mode="split"', diff_html)
+            self.assertIn('data-odin-toggle-file-mode="large.py" data-view-mode="unified"', diff_html)
+            self.assertIn("☰ Unified (111 lines)", diff_html)
+
+        # Verify retroactive upgrade of legacy <details class="odin-diff-file-card"> blocks
+        legacy_diff_html = (
+            '<!DOCTYPE html><html><head></head><body>'
+            '<div class="odin-diff-viewer" data-view-mode="split">'
+            '<details class="odin-diff-file-card" open data-file-path="a.py"><summary>'
+            '<div class="odin-diff-file-summary-inner"><div class="odin-diff-file-meta">'
+            '<span class="odin-diff-stat-add">+19</span><span class="odin-diff-stat-del">-0</span>'
+            '</div><div class="odin-diff-file-meta">'
+            '<button type="button" data-odin-approve-file="a.py">☑️ Approve File</button>'
+            '</div></div></summary></details>'
+            '<details class="odin-diff-file-card" open data-file-path="b.py"><summary>'
+            '<div class="odin-diff-file-summary-inner"><div class="odin-diff-file-meta">'
+            '<span class="odin-diff-stat-add">+80</span><span class="odin-diff-stat-del">-25</span>'
+            '</div><div class="odin-diff-file-meta">'
+            '<button type="button" data-odin-approve-file="b.py">☑️ Approve File</button>'
+            '</div></div></summary></details>'
+            '</div></body></html>'
+        )
+        upgraded = self.odin_state.ensure_diff_styles(legacy_diff_html)
+        self.assertIn('data-file-path="a.py" data-view-mode="split" data-default-view-mode="split" data-changed-lines="19"', upgraded)
+        self.assertIn('data-file-path="b.py" data-view-mode="unified" data-default-view-mode="unified" data-changed-lines="105"', upgraded)
+        self.assertIn('data-odin-toggle-file-mode="b.py" data-view-mode="unified"', upgraded)
+
 
 if __name__ == "__main__":
     unittest.main()
