@@ -219,6 +219,15 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
           }
           nodesToMove.forEach((n) => body.appendChild(n));
           sec.appendChild(body);
+        } else {
+          let curr = body.nextSibling;
+          while (curr) {
+            const next = curr.nextSibling;
+            if (!(curr.nodeType === 1 && curr.hasAttribute("data-odin-transient"))) {
+              body.appendChild(curr);
+            }
+            curr = next;
+          }
         }
         return body;
       }
@@ -2075,9 +2084,16 @@ def _ensure_huginn_phase_body(content: str) -> str:
             body,
             flags=re.IGNORECASE,
         )
-        if re.search(r'<div\b[^>]*class=["\'][^"\']*\bphase-body\b[^"\']*["\']', body, re.IGNORECASE):
+        # Strip empty placeholder <div class="phase-body">...</div> if iteration cards were appended after it
+        body_no_empty_pb = re.sub(
+            r'<div\b[^>]*class=["\'][^"\']*\bphase-body\b[^"\']*["\'][^>]*>\s*(?:<!--[\s\S]*?-->\s*)*</div>',
+            "",
+            body,
+            flags=re.IGNORECASE,
+        )
+        if re.search(r'<div\b[^>]*class=["\'][^"\']*\bphase-body\b[^"\']*["\']', body_no_empty_pb, re.IGNORECASE):
             return body
-        stripped = body.strip()
+        stripped = body_no_empty_pb.strip()
         if not stripped:
             return '\n      <div class="phase-body"></div>\n    '
         return f'\n      <div class="phase-body">\n        {stripped}\n      </div>\n    '
@@ -2117,6 +2133,32 @@ ODIN_LIGHT_THEME_STYLES = """<style id="odin-light-theme-fixes">
     /* Top page header scrolls naturally; iteration cards use overflow:clip so sticky file diff headers work */
     .odin-header, .odin-topbar { position: relative !important; top: auto !important; }
     details.odin-iteration-card { overflow: clip !important; }
+    details.odin-iteration-card > .iteration-body,
+    details.odin-iteration-card > .odin-iteration-body {
+      padding: 0.9rem 1.15rem;
+      border-top: 1px solid var(--border);
+    }
+    table:not(.odin-diff-split-table):not(.odin-diff-unified-table) {
+      width: 100%;
+      max-width: 100%;
+    }
+    table:not(.odin-diff-split-table):not(.odin-diff-unified-table) th,
+    table:not(.odin-diff-split-table):not(.odin-diff-unified-table) td {
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      vertical-align: top;
+    }
+    :not(pre) > code {
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      white-space: normal;
+    }
+    html[data-theme="light"] :not(pre) > code {
+      color-scheme: light;
+      background: rgba(15, 23, 42, 0.07);
+      color: #0f172a;
+      border-color: rgba(15, 23, 42, 0.18);
+    }
     /* Keep dark code diff surface readable in both light and dark page themes */
     html[data-theme="light"] .odin-diff-viewer {
       color-scheme: dark;

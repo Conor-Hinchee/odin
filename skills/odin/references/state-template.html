@@ -355,7 +355,8 @@
       user-select: none;
     }
 
-    details.odin-iteration-card > .iteration-body {
+    details.odin-iteration-card > .iteration-body,
+    details.odin-iteration-card > .odin-iteration-body {
       padding: 0.9rem 1.15rem;
       border-top: 1px solid var(--border);
     }
@@ -373,6 +374,7 @@
     table {
       border-collapse: collapse;
       width: 100%;
+      max-width: 100%;
       margin: 1rem 0;
       font-size: 0.9rem;
       border-radius: 10px;
@@ -383,6 +385,9 @@
       border: 1px solid var(--border);
       padding: 0.65rem 0.9rem;
       text-align: left;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      vertical-align: top;
     }
 
     th {
@@ -402,6 +407,17 @@
     }
 
     code { padding: 0.15rem 0.4rem; border: 1px solid #1e293b; }
+    :not(pre) > code {
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      white-space: normal;
+    }
+    html[data-theme="light"] :not(pre) > code {
+      color-scheme: light;
+      background: rgba(15, 23, 42, 0.07);
+      color: #0f172a;
+      border-color: rgba(15, 23, 42, 0.18);
+    }
     pre { padding: 1rem; overflow-x: auto; border: 1px solid #1e293b; }
     pre code { border: none; padding: 0; background: transparent; }
 

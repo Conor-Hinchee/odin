@@ -907,6 +907,36 @@ class TestOdin(unittest.TestCase):
         self.assertIn('data-file-path="b.py" data-view-mode="unified" data-default-view-mode="unified" data-changed-lines="105"', upgraded)
         self.assertIn('data-odin-toggle-file-mode="b.py" data-view-mode="unified"', upgraded)
 
+    def test_huginn_plan_table_wrapping_and_phase_body_enclosure(self):
+        light_styles = self.odin_state.ODIN_LIGHT_THEME_STYLES
+        self.assertIn("details.odin-iteration-card > .odin-iteration-body", light_styles)
+        self.assertIn("table:not(.odin-diff-split-table):not(.odin-diff-unified-table) th", light_styles)
+        self.assertIn("overflow-wrap: anywhere;", light_styles)
+        self.assertIn('html[data-theme="light"] :not(pre) > code', light_styles)
+
+        tpl_path = Path(__file__).resolve().parent.parent / "skills" / "odin" / "references" / "state-template.html"
+        tpl = tpl_path.read_text(encoding="utf-8")
+        self.assertIn("details.odin-iteration-card > .odin-iteration-body", tpl)
+        self.assertIn(":not(pre) > code", tpl)
+
+        sample = (
+            '<section id="huginn-plan" data-status="awaiting_human">\n'
+            '  <div class="phase-header"><h2>Phase 1</h2></div>\n'
+            '  <div class="phase-body">\n'
+            '    <!-- Plan, Test Strategy, DoD, Subagent Matrix -->\n'
+            '  </div>\n'
+            '  <details class="odin-iteration-card" data-iteration="1" open>\n'
+            '    <summary><span>Iteration 1</span></summary>\n'
+            '    <div class="odin-iteration-body"><table><tr><td><code>long/path</code></td></tr></table></div>\n'
+            '  </details>\n'
+            '</section>'
+        )
+        wrapped = self.odin_state._ensure_huginn_phase_body(sample)
+        self.assertEqual(wrapped.count('class="phase-body"'), 1)
+        pb_idx = wrapped.index('class="phase-body"')
+        card_idx = wrapped.index('class="odin-iteration-card"')
+        self.assertLess(pb_idx, card_idx)
+
 
 if __name__ == "__main__":
     unittest.main()
