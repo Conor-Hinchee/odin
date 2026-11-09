@@ -205,6 +205,15 @@ def _extract_bullets_from_state_html(content: str) -> tuple[str, str, list[str]]
                         heimdall = phases.get("heimdall")
                         if isinstance(heimdall, dict):
                             cand = heimdall.get("approved_prompt_summary")
+                            if not (isinstance(cand, list) and cand):
+                                h_sum = str(heimdall.get("summary") or "")
+                                m_ps = re.search(r"(?i)###?\s*Prompt\s+Summary\s*\n((?:\s*(?:\d+\.|[-*])\s+.+(?:\n|$))+)", h_sum)
+                                if m_ps:
+                                    cand = [
+                                        re.sub(r"^\s*(?:\d+\.|[-*])\s+", "", ln).strip()
+                                        for ln in m_ps.group(1).splitlines()
+                                        if ln.strip()
+                                    ]
                 if isinstance(cand, list) and cand:
                     raw_items = cand
                     break

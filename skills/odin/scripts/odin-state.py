@@ -841,14 +841,17 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
             const reviewBlock = typeof window.__odinBuildReviewCommentsSummary === "function"
               ? window.__odinBuildReviewCommentsSummary()
               : "";
-            const combinedNote = [rawNote, reviewBlock].filter(Boolean).join("\\n\\n");
-            const selectedSkills = getSelectedSkills("#odin-heimdall-gate-banner");
             const approvedPromptSummary = Array.from(
               document.querySelectorAll("#odin-heimdall-gate-banner [data-odin-prompt-summary-row]")
             )
               .filter((row) => row.querySelector("[data-odin-prompt-summary-check]")?.checked)
               .map((row) => (row.querySelector("[data-odin-prompt-summary-text]")?.value || "").trim())
               .filter(Boolean);
+            const summaryBlock = approvedPromptSummary.length
+              ? "### Prompt Summary\\n" + approvedPromptSummary.map((item, idx) => `${idx + 1}. ${item}`).join("\\n")
+              : "";
+            const combinedNote = [rawNote, reviewBlock, summaryBlock].filter(Boolean).join("\\n\\n");
+            const selectedSkills = getSelectedSkills("#odin-heimdall-gate-banner");
             try {
               const res = await fetch(`${API_BASE}/api/projects/action`, {
                 method: "POST",
