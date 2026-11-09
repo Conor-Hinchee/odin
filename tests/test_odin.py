@@ -1041,6 +1041,88 @@ class TestOdin(unittest.TestCase):
         self.assertEqual(by_id["delta-dismissed-03"]["status"], "dismissed")
         self.assertIn("✅ 2 APPLIED • 🚫 1 DISMISSED", after_html)
 
+    def test_heimdall_prompt_summary_curator_and_wakeup_event(self):
+        import io
+        from contextlib import redirect_stdout
+
+        args = self.odin_state.build_parser().parse_args(
+            [
+                "update-phase",
+                "--file",
+                str(self.sample_html_path),
+                "--phase",
+                "heimdall",
+                "--status",
+                "awaiting_human",
+                "--summary",
+                "Ready for Pre-PR Gate",
+                "--prompt-summary-item",
+                "Bullet A: Disable verbatim prompt dumps by default",
+                "--prompt-summary-item",
+                "Bullet B: Add interactive Heimdall prompt summary curation UI",
+            ]
+        )
+        self.assertEqual(self.odin_state.run_command(args), 0)
+
+        html_out = self.sample_html_path.read_text(encoding="utf-8")
+        ledger = self.odin_state.extract_ledger(html_out, str(self.sample_html_path))
+        expected_bullets = [
+            "Bullet A: Disable verbatim prompt dumps by default",
+            "Bullet B: Add interactive Heimdall prompt summary curation UI",
+        ]
+        self.assertEqual(ledger.get("prompt_summary_candidates"), expected_bullets)
+        self.assertEqual(
+            ledger["iterations"][-1]["phases"]["heimdall"].get("prompt_summary_candidates"),
+            expected_bullets,
+        )
+
+        self.assertIn('id="odin-heimdall-gate-banner"', html_out)
+        self.assertIn("data-odin-prompt-summary-curator", html_out)
+        self.assertIn("data-odin-prompt-summary-list", html_out)
+        self.assertIn("data-odin-prompt-summary-row", html_out)
+        self.assertIn('value="Bullet A: Disable verbatim prompt dumps by default"', html_out)
+        self.assertIn('value="Bullet B: Add interactive Heimdall prompt summary curation UI"', html_out)
+        self.assertIn('data-odin-summary-action="add-item"', html_out)
+        self.assertIn('data-odin-summary-action="remove-item"', html_out)
+        self.assertIn(
+            '#odin-heimdall-gate-banner:hover, #odin-heimdall-gate-banner:focus-within',
+            self.odin_state.ODIN_SAFE_POLLER_FN,
+        )
+
+        # Verify write_wakeup_event & cmd_wait_for_human include approvedPromptSummary
+        approved = [
+            "Curated Bullet 1: Disable verbatim prompt dumps",
+            "Curated Bullet 2: Curate prompt summary in Heimdall",
+        ]
+        wf = self.odin_state.write_wakeup_event(
+            self.sample_html_path,
+            decision="approve_pr",
+            phase="heimdall-validation",
+            notes="Looks great, open PR",
+            selected_skills=["/code-review"],
+            approved_prompt_summary=approved,
+        )
+        wf_data = json.loads(wf.read_text(encoding="utf-8"))
+        self.assertEqual(wf_data["approvedPromptSummary"], approved)
+
+        wfh_args = argparse.Namespace(
+            html_file=str(self.sample_html_path),
+            file=str(self.sample_html_path),
+            phase="heimdall-validation",
+            session_id="test-session-heimdall",
+            timeout=2.0,
+            poll_interval=0.05,
+            consume_existing=True,
+        )
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = self.odin_state.cmd_wait_for_human(wfh_args)
+        self.assertEqual(rc, 0)
+        stdout_txt = buf.getvalue()
+        self.assertIn("📝 Approved PR Prompt Summary (use for ### Prompt Summary):", stdout_txt)
+        self.assertIn("1. Curated Bullet 1: Disable verbatim prompt dumps", stdout_txt)
+        self.assertIn("2. Curated Bullet 2: Curate prompt summary in Heimdall", stdout_txt)
+
 
 if __name__ == "__main__":
     unittest.main()

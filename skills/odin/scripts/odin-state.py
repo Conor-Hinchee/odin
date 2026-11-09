@@ -95,7 +95,17 @@ def extract_ledger(content: str, file_path: str = "") -> dict:
     )
     if match:
         try:
-            return json.loads(match.group(1).strip())
+            parsed_ledger = json.loads(match.group(1).strip())
+            if isinstance(parsed_ledger, dict):
+                if not parsed_ledger.get("session_id"):
+                    body_sid_m = re.search(
+                        r'<body\b[^>]*\bdata-session-id=["\']([^"\']+)["\']',
+                        content,
+                        re.IGNORECASE,
+                    )
+                    if body_sid_m and body_sid_m.group(1).strip():
+                        parsed_ledger["session_id"] = body_sid_m.group(1).strip()
+                return parsed_ledger
         except Exception:
             pass
 
@@ -104,6 +114,10 @@ def extract_ledger(content: str, file_path: str = "") -> dict:
     title = html_mod.unescape(re.sub(r"<[^>]+>", "", title_m.group(1)).strip()) if title_m else slug
     sess_m = re.search(
         r'<meta\s+name=["\']odin-session-id["\']\s+content=["\']([^"\']+)["\']',
+        content,
+        re.IGNORECASE,
+    ) or re.search(
+        r'<body\b[^>]*\bdata-session-id=["\']([^"\']+)["\']',
         content,
         re.IGNORECASE,
     )
@@ -316,6 +330,40 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
             cb.removeAttribute("checked");
           }
         });
+      }
+
+      function appendPromptSummaryRow(listEl, initialValue = "") {
+        if (!listEl) return null;
+        const row = document.createElement("div");
+        row.setAttribute("data-odin-prompt-summary-row", "true");
+        row.style.cssText = "display:flex;align-items:center;gap:0.5rem;";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = true;
+        cb.setAttribute("checked", "checked");
+        cb.setAttribute("data-odin-prompt-summary-check", "true");
+        cb.style.cssText = "accent-color:var(--emerald, #34d399);cursor:pointer;width:16px;height:16px;";
+        const inp = document.createElement("input");
+        inp.type = "text";
+        inp.value = initialValue || "";
+        inp.placeholder = "Concise 1-line summary bullet for ### Prompt Summary...";
+        inp.setAttribute("data-odin-prompt-summary-text", "true");
+        inp.style.cssText =
+          "flex:1;min-width:220px;background:var(--surface, #0f172a);color:var(--text, #f8fafc);border:1px solid rgba(148,163,184,0.38);border-radius:8px;padding:0.4rem 0.7rem;font-size:0.82rem;";
+        const rmBtn = document.createElement("button");
+        rmBtn.type = "button";
+        rmBtn.className = "btn";
+        rmBtn.setAttribute("data-odin-summary-action", "remove-item");
+        rmBtn.title = "Remove bullet";
+        rmBtn.style.cssText =
+          "padding:0.28rem 0.55rem;font-size:0.76rem;color:var(--crimson, #fb7185);border-color:rgba(244,63,94,0.4);";
+        rmBtn.textContent = "✕";
+        row.appendChild(cb);
+        row.appendChild(inp);
+        row.appendChild(rmBtn);
+        listEl.appendChild(row);
+        inp.focus();
+        return inp;
       }
 
       // Ensure phase-body wrapper and header co-edit button exist at startup
@@ -642,6 +690,29 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
           return;
         }
 
+        const summaryActionBtn = e.target.closest("[data-odin-summary-action]");
+        if (summaryActionBtn) {
+          const sAct = summaryActionBtn.getAttribute("data-odin-summary-action");
+          const curator =
+            summaryActionBtn.closest("[data-odin-prompt-summary-curator]") ||
+            document.querySelector("[data-odin-prompt-summary-curator]");
+          const listEl = curator?.querySelector("[data-odin-prompt-summary-list]");
+          if (sAct === "add-item") {
+            appendPromptSummaryRow(listEl, "");
+            return;
+          }
+          if (sAct === "remove-item") {
+            const row = summaryActionBtn.closest("[data-odin-prompt-summary-row]");
+            if (row) row.remove();
+            return;
+          }
+          if (sAct === "use-raw-prompt") {
+            const seed = summaryActionBtn.getAttribute("data-prompt-summary-seed") || "";
+            appendPromptSummaryRow(listEl, seed);
+            return;
+          }
+        }
+
         const topActionBtn = e.target.closest("[data-odin-top-action]");
         if (topActionBtn) {
           const act = topActionBtn.getAttribute("data-odin-top-action");
@@ -772,6 +843,12 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
               : "";
             const combinedNote = [rawNote, reviewBlock].filter(Boolean).join("\\n\\n");
             const selectedSkills = getSelectedSkills("#odin-heimdall-gate-banner");
+            const approvedPromptSummary = Array.from(
+              document.querySelectorAll("#odin-heimdall-gate-banner [data-odin-prompt-summary-row]")
+            )
+              .filter((row) => row.querySelector("[data-odin-prompt-summary-check]")?.checked)
+              .map((row) => (row.querySelector("[data-odin-prompt-summary-text]")?.value || "").trim())
+              .filter(Boolean);
             try {
               const res = await fetch(`${API_BASE}/api/projects/action`, {
                 method: "POST",
@@ -781,7 +858,8 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
                   id: relId,
                   decision: "approve_pr",
                   humanNote: combinedNote || "Approved Heimdall Pre-PR Code Review Gate in Odin.",
-                  selectedSkills
+                  selectedSkills,
+                  approvedPromptSummary
                 })
               });
               const data = await res.json();
@@ -2063,6 +2141,12 @@ ODIN_SAFE_POLLER_FN = """      const lastServerSnapshots = {};
                 if (bId === "odin-top-mimir-banner" && document.querySelector("#odin-top-mimir-banner:hover")) {
                   return;
                 }
+                if (
+                  bId === "odin-heimdall-gate-banner" &&
+                  document.querySelector("#odin-heimdall-gate-banner:hover, #odin-heimdall-gate-banner:focus-within")
+                ) {
+                  return;
+                }
                 const inChild = doc.getElementById(bId);
                 const exChild = document.getElementById(bId);
                 const inHtml = inChild ? inChild.outerHTML : "";
@@ -2372,6 +2456,160 @@ def _replace_or_strip_top_command_banners(content: str, replacement_html: str) -
     return "".join(out_parts), True
 
 
+_TRANSCRIPT_TAG_STRIP_RE = re.compile(
+    r"<system-reminder>[\s\S]*?</system-reminder>"
+    r"|</?command-[^>]*>"
+    r"|<local-command-stdout>[\s\S]*?</local-command-stdout>",
+    re.IGNORECASE,
+)
+
+
+def _clean_transcript_prompt_text(raw_text: str) -> str:
+    cleaned = _TRANSCRIPT_TAG_STRIP_RE.sub("", str(raw_text or ""))
+    return cleaned.strip()
+
+
+def _summarize_raw_prompt_line(text: str, max_len: int = 160) -> str:
+    cleaned = _clean_transcript_prompt_text(text)
+    for raw_line in cleaned.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = re.sub(r"^(?:/(?:odin|grill-me)\b[\s:—-]*)+", "", line, flags=re.IGNORECASE).strip()
+        line = re.sub(r"^(?:#+\s*|[-*•]\s*)+", "", line).strip()
+        line = re.sub(r"\s+", " ", line).strip()
+        if not line:
+            continue
+        if len(line) > max_len:
+            return line[: max_len - 3].rstrip() + "..."
+        return line
+    return ""
+
+
+def _resolve_prompt_summary_candidates(ledger: dict) -> tuple[list[str], list[dict]]:
+    raw_prompts: list[dict] = []
+    session_id = str(ledger.get("session_id") or "").strip()
+    if session_id:
+        try:
+            import odin_transcript
+
+            t_path = odin_transcript.find_transcript(session_id)
+            if t_path:
+                for obj in odin_transcript.read_lines(t_path):
+                    if odin_transcript.is_human_prompt(obj):
+                        raw_txt = _clean_transcript_prompt_text(odin_transcript.prompt_text(obj))
+                        if raw_txt:
+                            seed = _summarize_raw_prompt_line(raw_txt)
+                            raw_prompts.append(
+                                {
+                                    "index": len(raw_prompts) + 1,
+                                    "text": raw_txt,
+                                    "seed": seed or raw_txt[:157],
+                                }
+                            )
+        except Exception:
+            pass
+
+    cur_iter = int(ledger.get("current_iteration", 1) or 1)
+    cur_it_obj: dict = {}
+    iterations = ledger.get("iterations") if isinstance(ledger.get("iterations"), list) else []
+    for it_obj in iterations:
+        if isinstance(it_obj, dict) and int(it_obj.get("iteration", 0) or 0) == cur_iter:
+            cur_it_obj = it_obj
+            break
+    if not cur_it_obj and iterations and isinstance(iterations[-1], dict):
+        cur_it_obj = iterations[-1]
+
+    heimdall_phase = (cur_it_obj.get("phases") or {}).get("heimdall") or {}
+    explicit_sources = (
+        ledger.get("approved_prompt_summary"),
+        heimdall_phase.get("approved_prompt_summary"),
+        heimdall_phase.get("prompt_summary_candidates"),
+        ledger.get("prompt_summary_candidates"),
+    )
+    candidates: list[str] = []
+    for src in explicit_sources:
+        if isinstance(src, list):
+            cleaned_list = [str(item).strip() for item in src if str(item).strip()]
+            if cleaned_list:
+                candidates = cleaned_list
+                break
+
+    if not candidates and raw_prompts:
+        seen_seeds: set[str] = set()
+        for rp in raw_prompts:
+            seed = str(rp.get("seed") or "").strip()
+            if seed and seed not in seen_seeds:
+                seen_seeds.add(seed)
+                candidates.append(seed)
+
+    if not candidates:
+        fallback_title = str(ledger.get("title") or "").strip()
+        if fallback_title:
+            candidates = [fallback_title]
+
+    return candidates, raw_prompts
+
+
+def build_heimdall_prompt_summary_curator_html(ledger: dict, compact: bool = False) -> str:
+    candidates, raw_prompts = _resolve_prompt_summary_candidates(ledger)
+    row_html_parts = []
+    for cand in candidates:
+        cand_esc = html_mod.escape(str(cand), quote=True)
+        row_html_parts.append(
+            f'          <div data-odin-prompt-summary-row="true" style="display:flex;align-items:center;gap:0.5rem;">\n'
+            f'            <input type="checkbox" data-odin-prompt-summary-check checked style="accent-color:var(--emerald, #34d399);cursor:pointer;width:16px;height:16px;" />\n'
+            f'            <input type="text" data-odin-prompt-summary-text value="{cand_esc}" placeholder="Concise 1-line summary bullet for ### Prompt Summary..." '
+            f'style="flex:1;min-width:220px;background:var(--surface, #0f172a);color:var(--text, #f8fafc);border:1px solid rgba(148,163,184,0.38);border-radius:8px;padding:0.4rem 0.7rem;font-size:0.82rem;" />\n'
+            f'            <button type="button" class="btn" data-odin-summary-action="remove-item" title="Remove bullet" '
+            f'style="padding:0.28rem 0.55rem;font-size:0.76rem;color:var(--crimson, #fb7185);border-color:rgba(244,63,94,0.4);">✕</button>\n'
+            f'          </div>'
+        )
+    rows_joined = "\n".join(row_html_parts)
+
+    raw_drawer_html = ""
+    if raw_prompts:
+        raw_items_html = []
+        for rp in raw_prompts:
+            seed_esc = html_mod.escape(str(rp.get("seed") or ""), quote=True)
+            txt_esc = html_mod.escape(str(rp.get("text") or ""))
+            idx_num = int(rp.get("index") or 1)
+            raw_items_html.append(
+                f'              <div style="padding:0.55rem 0.75rem;border-radius:8px;background:var(--surface, #0f172a);border:1px solid rgba(148,163,184,0.28);display:flex;flex-direction:column;gap:0.35rem;">\n'
+                f'                <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;flex-wrap:wrap;">\n'
+                f'                  <span style="font-size:0.74rem;font-weight:700;color:var(--cyan, #38bdf8);">Prompt #{idx_num}</span>\n'
+                f'                  <button type="button" class="btn" data-odin-summary-action="use-raw-prompt" data-prompt-summary-seed="{seed_esc}" style="font-size:0.73rem;padding:0.2rem 0.55rem;">➕ Add to Summary</button>\n'
+                f'                </div>\n'
+                f'                <pre style="margin:0;white-space:pre-wrap;word-break:break-word;font-size:0.76rem;color:var(--muted, #94a3b8);max-height:110px;overflow-y:auto;">{txt_esc}</pre>\n'
+                f'              </div>'
+            )
+        raw_drawer_html = (
+            f'\n          <details data-odin-raw-prompts-drawer style="margin-top:0.35rem;">\n'
+            f'            <summary style="cursor:pointer;font-size:0.77rem;font-weight:700;color:var(--cyan, #38bdf8);">🔍 Reference: Session Prompts from Transcript ({len(raw_prompts)}) — Click to pick or quote</summary>\n'
+            f'            <div style="margin-top:0.5rem;display:flex;flex-direction:column;gap:0.45rem;">\n'
+            + "\n".join(raw_items_html)
+            + "\n            </div>\n          </details>"
+        )
+
+    pad_style = "0.65rem 0.85rem" if compact else "0.8rem 1rem"
+    return (
+        f'        <div class="odin-prompt-summary-curator" data-odin-prompt-summary-curator="true" '
+        f'style="background:var(--surface-elevated);border:1px solid rgba(56,189,248,0.42);border-left:4px solid var(--cyan);border-radius:10px;padding:{pad_style};display:flex;flex-direction:column;gap:0.55rem;">\n'
+        f'          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">\n'
+        f'            <div>\n'
+        f'              <div style="font-size:0.84rem;font-weight:800;color:var(--cyan);">📝 Curate PR Prompt Summary (<code>### Prompt Summary</code>)</div>\n'
+        f'              <div style="font-size:0.76rem;color:var(--muted);margin-top:0.12rem;">Check, uncheck, reorder, or edit the summary bullets that will be published in the Pull Request description (verbatim prompt dumps are disabled).</div>\n'
+        f'            </div>\n'
+        f'            <button type="button" class="btn" data-odin-summary-action="add-item" style="font-size:0.76rem;padding:0.3rem 0.65rem;border-color:rgba(56,189,248,0.55);color:var(--cyan);font-weight:700;">➕ Add Summary Bullet</button>\n'
+        f'          </div>\n'
+        f'          <div data-odin-prompt-summary-list="true" style="display:flex;flex-direction:column;gap:0.42rem;">\n'
+        f'{rows_joined}\n'
+        f'          </div>'
+        f'{raw_drawer_html}\n'
+        f'        </div>'
+    )
+
+
 def sync_top_banners_in_html(content: str, ledger: dict, telemetry: dict | None = None) -> str:
     content = _ensure_light_mode_styles(content)
     content = _ensure_huginn_phase_body(content)
@@ -2508,6 +2746,7 @@ def sync_top_banners_in_html(content: str, ledger: dict, telemetry: dict | None 
 
     # 3. Phase 3 Heimdall Pre-PR Code Review Gate Banner
     if heimdall_status == "awaiting_human":
+        curator_html = build_heimdall_prompt_summary_curator_html(ledger)
         banner_parts.append(
             '      <div id="odin-heimdall-gate-banner" style="background:linear-gradient(90deg,rgba(245,158,11,0.18),rgba(56,189,248,0.12));'
             'border:1px solid rgba(245,158,11,0.6);border-left:5px solid var(--gold);border-radius:14px;padding:1rem 1.25rem;'
@@ -2518,13 +2757,14 @@ def sync_top_banners_in_html(content: str, ledger: dict, telemetry: dict | None 
             '              <span class="badge-awaiting_human" style="font-size:0.76rem;">🛡️ HEIMDALL PRE-PR CODE REVIEW GATE</span>\n'
             '              <span class="badge-done" style="font-size:0.74rem;">✅ AUTOMATED TESTS &amp; LINTERS PASSED</span>\n'
             '            </div>\n'
-            '            <div style="font-size:0.86rem;margin-top:0.35rem;color:var(--text);">Review the Side-by-Side contextual code diff in <code>#heimdall-validation</code> below. Click <strong>Approve Code Diff &amp; Open PR</strong> to wake the agent and advance to Phase 4, or request code changes to step back to Thor.</div>\n'
+            '            <div style="font-size:0.86rem;margin-top:0.35rem;color:var(--text);">Review the Side-by-Side contextual code diff in <code>#heimdall-validation</code> below and curate the PR <code>### Prompt Summary</code> bullets. Click <strong>Approve Code Diff &amp; Open PR</strong> to wake the agent and advance to Phase 4, or request code changes to step back to Thor.</div>\n'
             '          </div>\n'
             '          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">\n'
             '            <button type="button" class="btn" data-odin-top-action="approve-heimdall-pr" style="border-color:rgba(16,185,129,0.65);background:rgba(16,185,129,0.22);color:var(--emerald);font-weight:700;padding:0.5rem 0.95rem;">✅ Approve Code Diff &amp; Open PR (Wake Agent)</button>\n'
             '            <button type="button" class="btn" data-odin-top-action="reject-heimdall-pr" style="border-color:rgba(244,63,94,0.55);background:rgba(244,63,94,0.16);color:var(--crimson);font-weight:700;padding:0.5rem 0.95rem;">🚨 Request Code Changes (Step Back to Thor)</button>\n'
             '          </div>\n'
             '        </div>\n'
+            f'{curator_html}\n'
             '        <div style="display:flex;gap:0.65rem;align-items:center;flex-wrap:wrap;">\n'
             '          <input id="odin-heimdall-note-input" type="text" placeholder="Optional PR review note or requested code change reason..." '
             'style="flex:1;min-width:260px;background:var(--surface-elevated);color:var(--text);border:1px solid rgba(148,163,184,0.38);border-radius:8px;padding:0.45rem 0.75rem;font-size:0.82rem;" />\n'
@@ -4700,6 +4940,19 @@ def cmd_update_phase(args: argparse.Namespace) -> int:
             if int(it_obj.get("iteration", 0)) == target_iter:
                 it_obj["incident_waiver"] = incident_waiver
 
+    prompt_summary_items = [
+        str(s).strip()
+        for s in (getattr(args, "prompt_summary_item", None) or [])
+        if str(s).strip()
+    ]
+    if prompt_summary_items:
+        ledger["prompt_summary_candidates"] = prompt_summary_items
+        for it_obj in ledger.get("iterations", []):
+            if int(it_obj.get("iteration", 0)) == target_iter:
+                it_obj.setdefault("phases", {}).setdefault("heimdall", {})[
+                    "prompt_summary_candidates"
+                ] = prompt_summary_items
+
     if phase_key == "hlidskjalf" and args.status == "done":
         unaddressed = _unaddressed_friction_events(ledger)
         if unaddressed:
@@ -4812,11 +5065,21 @@ def cmd_update_phase(args: argparse.Namespace) -> int:
             for rec_k, rec_status in auto_reconciled.items():
                 phases_dict.setdefault(rec_k, {})["status"] = rec_status
                 phases_dict[rec_k]["updated_at"] = now_iso()
-            phases_dict[phase_key] = {
-                "status": args.status,
-                "updated_at": now_iso(),
-                "summary": args.summary or summary_title,
-            }
+            prev_phase_entry = phases_dict.get(phase_key) if isinstance(phases_dict.get(phase_key), dict) else {}
+            updated_phase_entry = dict(prev_phase_entry)
+            updated_phase_entry.update(
+                {
+                    "status": args.status,
+                    "updated_at": now_iso(),
+                    "summary": args.summary or summary_title,
+                }
+            )
+            if prompt_summary_items:
+                if phase_key == "heimdall":
+                    updated_phase_entry["prompt_summary_candidates"] = prompt_summary_items
+                else:
+                    phases_dict.setdefault("heimdall", {})["prompt_summary_candidates"] = prompt_summary_items
+            phases_dict[phase_key] = updated_phase_entry
             if files_list:
                 it_obj["files_touched"] = files_list
             if pr_url:
@@ -4824,19 +5087,24 @@ def cmd_update_phase(args: argparse.Namespace) -> int:
             if phase_key == "human" and args.status in ("done", "awaiting_human", "reject"):
                 it_obj["status"] = args.status
     if not found_iter:
+        new_phase_entry = {
+            "status": args.status,
+            "updated_at": now_iso(),
+            "summary": args.summary or summary_title,
+        }
+        if prompt_summary_items and phase_key == "heimdall":
+            new_phase_entry["prompt_summary_candidates"] = prompt_summary_items
         new_it = {
             "iteration": target_iter,
             "started_at": now_iso(),
             "status": args.status,
             "phases": {
-                phase_key: {
-                    "status": args.status,
-                    "updated_at": now_iso(),
-                    "summary": args.summary or summary_title,
-                }
+                phase_key: new_phase_entry,
             },
             "harness_delta_proposals": [],
         }
+        if prompt_summary_items and phase_key != "heimdall":
+            new_it["phases"]["heimdall"] = {"prompt_summary_candidates": prompt_summary_items}
         if files_list:
             new_it["files_touched"] = files_list
         if pr_url:
@@ -5689,12 +5957,16 @@ def write_wakeup_event(
     phase: str = "",
     notes: str = "",
     selected_skills: list | None = None,
+    approved_prompt_summary: list[str] | None = None,
     extra: dict | None = None,
 ) -> Path:
     p = Path(html_path).resolve()
     slug = p.stem
     states_dir = _get_odin_states_dir_for_html(p)
     wakeup_file = states_dir / f".odin-wakeup-{slug}.json"
+    cleaned_summary = [
+        str(s).strip() for s in (approved_prompt_summary or []) if str(s).strip()
+    ]
     payload = {
         "slug": slug,
         "file": str(p),
@@ -5702,6 +5974,7 @@ def write_wakeup_event(
         "phase": phase,
         "notes": notes,
         "selectedSkills": list(selected_skills or []),
+        "approvedPromptSummary": cleaned_summary,
         "timestamp": now_iso(),
     }
     if extra:
@@ -5818,6 +6091,11 @@ def cmd_wait_for_human(args: argparse.Namespace) -> int:
                     print(f"\n⚡ Partner Attached Skills to Activate: {' '.join(skills)}")
                 if event.get("notes"):
                     print(f"\n💬 Partner Notes / Instructions:\n{event['notes']}")
+                approved_summary = event.get("approvedPromptSummary") or []
+                if approved_summary:
+                    print("\n📝 Approved PR Prompt Summary (use for ### Prompt Summary):")
+                    for idx, item in enumerate(approved_summary, 1):
+                        print(f"{idx}. {item}")
                 return 0
 
             if timeout_sec > 0 and (now_ts - started_at) >= timeout_sec:
@@ -6531,6 +6809,12 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--pr-url", help="GitHub Pull Request URL to stamp on <body> and render in the header & phase card")
     up.add_argument("--session-id", dest="session_id", help="Optional session ID to bind onto <body data-session-id>")
     up.add_argument("--incident-waiver", dest="incident_waiver", help="Explicit Phase 4 waiver reason when mid-flight incidents/failed checks do not require a Mímir Harness Delta")
+    up.add_argument(
+        "--prompt-summary-item",
+        action="append",
+        default=[],
+        help="Candidate bullet for ### Prompt Summary in Phase 3 Heimdall Pre-PR Gate (repeatable).",
+    )
     up.set_defaults(func=cmd_update_phase)
 
     lg = sub.add_parser("log", help="Append a progress entry to a phase's iteration card (no status change, no notification)")
