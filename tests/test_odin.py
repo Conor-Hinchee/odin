@@ -937,6 +937,110 @@ class TestOdin(unittest.TestCase):
         card_idx = wrapped.index('class="odin-iteration-card"')
         self.assertLess(pb_idx, card_idx)
 
+    def test_mutate_section_body_with_leading_style_block(self):
+        html_with_leading_style = (
+            '<section id="huginn-plan" data-status="active">\n'
+            '  <style data-odin-plan-readability>.plan-card { padding: 1rem; }</style>\n'
+            '  <div class="phase-header"><h2 class="phase-title">Phase 1: Huginn</h2></div>\n'
+            '  <div class="phase-body"><p>Initial placeholder plan</p></div>\n'
+            '</section>'
+        )
+        updated = self.odin_state.mutate_section_body(
+            html_with_leading_style,
+            "huginn-plan",
+            lambda _body: '\n  <div class="phase-body"><p>Finalized implementation blueprint</p></div>\n',
+        )
+        self.assertIn("data-odin-plan-readability", updated)
+        self.assertIn("Finalized implementation blueprint", updated)
+        self.assertNotIn("Initial placeholder plan", updated)
+
+    def test_sync_parent_mimir_delta_on_completion_marks_bundled_deltas_applied(self):
+        parent_html = self.sample_html_path.read_text(encoding="utf-8")
+        parent_ledger = self.odin_state.extract_ledger(parent_html, str(self.sample_html_path))
+        child_rel = "odin-states/mimir-delta-bundle-01.html"
+        parent_ledger["iterations"][0]["harness_delta_proposals"] = [
+            {
+                "id": "delta-bundle-01",
+                "iteration": 1,
+                "repo": "odin",
+                "target_file": "skills/odin/scripts/odin-state.py",
+                "priority": "p1",
+                "category": "workflow",
+                "root_cause": "Primary delta proposal",
+                "proposed_diff": "diff 1",
+                "status": "in_progress",
+                "spawned_ticket_id": child_rel,
+            },
+            {
+                "id": "delta-bundle-02",
+                "iteration": 1,
+                "repo": "odin",
+                "target_file": "skills/odin/resources/dashboard.html",
+                "priority": "p1",
+                "category": "workflow",
+                "root_cause": "Bundled sibling delta sharing spawned_ticket_id",
+                "proposed_diff": "diff 2",
+                "status": "in_progress",
+                "spawned_ticket_id": child_rel,
+            },
+            {
+                "id": "delta-dismissed-03",
+                "iteration": 1,
+                "repo": "odin",
+                "target_file": "SKILL.md",
+                "priority": "p2",
+                "category": "workflow",
+                "root_cause": "Dismissed delta",
+                "proposed_diff": "diff 3",
+                "status": "dismissed",
+            },
+        ]
+        parent_html = self.odin_state.save_ledger_into_html(parent_html, parent_ledger)
+        self.sample_html_path.write_text(parent_html, encoding="utf-8")
+
+        child_path = self.states_dir / "mimir-delta-bundle-01.html"
+        child_html = self.odin_state._build_child_delta_ticket_html(
+            child_slug="mimir-delta-bundle-01",
+            title="Bundled Delta Ticket",
+            worktree_dir="/tmp/odin",
+            session_id="",
+            delta_id="delta-bundle-01",
+            parent_rel=f"odin-states/{self.sample_html_path.name}",
+            plan_html="<p>Plan</p>",
+            repo_name="odin",
+        )
+        child_ledger = self.odin_state.extract_ledger(child_html, str(child_path))
+        child_ledger["mimir_delta_origin"] = {
+            "delta_id": "delta-bundle-01",
+            "parent_state_file": str(self.sample_html_path),
+        }
+        child_html = self.odin_state.save_ledger_into_html(child_html, child_ledger)
+        child_path.write_text(child_html, encoding="utf-8")
+
+        old_root = self.odin_state.AI_DEV_ROOT
+        try:
+            self.odin_state.AI_DEV_ROOT = self.tmp.name
+            res = self.odin_state.sync_parent_mimir_delta_on_completion(
+                child_path,
+                child_html,
+                child_ledger,
+            )
+        finally:
+            self.odin_state.AI_DEV_ROOT = old_root
+
+        self.assertIsNotNone(res)
+        self.assertTrue(res["updatedParent"])
+        self.assertIn("delta-bundle-01", res["deltaIds"])
+        self.assertIn("delta-bundle-02", res["deltaIds"])
+
+        after_html = self.sample_html_path.read_text(encoding="utf-8")
+        after_ledger = self.odin_state.extract_ledger(after_html, str(self.sample_html_path))
+        by_id = {d["id"]: d for d in self.odin_state._collect_all_deltas(after_ledger)}
+        self.assertEqual(by_id["delta-bundle-01"]["status"], "applied")
+        self.assertEqual(by_id["delta-bundle-02"]["status"], "applied")
+        self.assertEqual(by_id["delta-dismissed-03"]["status"], "dismissed")
+        self.assertIn("✅ 2 APPLIED • 🚫 1 DISMISSED", after_html)
+
 
 if __name__ == "__main__":
     unittest.main()
