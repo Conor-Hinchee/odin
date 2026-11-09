@@ -234,6 +234,7 @@ class TestPrHook(unittest.TestCase):
         hso = out["hookSpecificOutput"]
         self.assertEqual(hso["permissionDecision"], "deny")
         self.assertIn("Prompt Summary", hso["permissionDecisionReason"])
+        self.assertNotIn("verbatim prompts", hso["permissionDecisionReason"])
 
     def test_enriches_and_asks(self):
         self.hook.configure({"label": "ai-generated"})
@@ -247,7 +248,94 @@ class TestPrHook(unittest.TestCase):
         self.assertIn("Fix Step 2", new_cmd)
         self.assertIn("abc-session", new_cmd)
         self.assertIn("Claude Code (claude-opus-5-5)", new_cmd)
-        self.assertIn("Verbatim Session Prompts (1)", new_cmd)
+        self.assertNotIn("Verbatim Session Prompts", new_cmd)
+
+        # Strips existing Verbatim Session Prompts block on gh pr create / gh pr edit when include_verbatim_prompts is False
+        edit_cmd = (
+            'gh pr edit 42 --body "## Summary\n- x\n\n### Prompt Summary\n- fix it\n\n'
+            '<details>\n<summary>💬 Verbatim Session Prompts (1)</summary>\n\n1. old\n</details>"'
+        )
+        edit_out = self.hook.handle_pre_tool_use(self.payload(edit_cmd))
+        edit_new_cmd = edit_out["hookSpecificOutput"]["updatedInput"]["command"]
+        self.assertNotIn("Verbatim Session Prompts", edit_new_cmd)
+        self.assertIn("### Prompt Summary", edit_new_cmd)
+
+        # Appends Verbatim Session Prompts when include_verbatim_prompts is True
+        self.hook.configure({"label": "ai-generated", "include_verbatim_prompts": True})
+        out_verb = self.hook.handle_pre_tool_use(self.payload(cmd))
+        verb_cmd = out_verb["hookSpecificOutput"]["updatedInput"]["command"]
+        self.assertIn("Verbatim Session Prompts (1)", verb_cmd)
+
+    def test_sync_and_load_approved_prompt_summary(self):
+        # 1. Replace existing ### Prompt Summary section
+        replaced, changed = self.hook.sync_approved_prompt_summary(
+            "## Summary\n- Did thing\n\n### Prompt Summary\n- raw noisy prompt\n\n## Test Plan\n- ok",
+            ["Curated first bullet", "Curated second bullet"],
+        )
+        self.assertTrue(changed)
+        self.assertIn("### Prompt Summary\n1. Curated first bullet\n2. Curated second bullet\n\n## Test Plan", replaced)
+        self.assertNotIn("raw noisy prompt", replaced)
+
+        # 2. Append ### Prompt Summary before <details> when missing
+        appended, changed2 = self.hook.sync_approved_prompt_summary(
+            "## Summary\n- Did thing\n\n<details>\n<summary>Extra</summary>\n</details>",
+            ["Only curated bullet"],
+        )
+        self.assertTrue(changed2)
+        self.assertIn("### Prompt Summary\n1. Only curated bullet\n\n<details>", appended)
+
+        # 3. Load approved_prompt_summary from Odin state HTML ledger and auto-sync in handle_pre_tool_use
+        states_dir = Path(self.tmp.name) / "odin-states"
+        states_dir.mkdir(parents=True)
+        state_html = states_dir / "task.html"
+        ledger = {
+            "session_id": "abc-session",
+            "current_iteration": 1,
+            "approved_prompt_summary": [
+                "Synthesize technical intent in Heimdall Phase 3",
+                "Default include_verbatim_prompts to false in PR hook",
+            ],
+            "iterations": [
+                {
+                    "iteration": 1,
+                    "phases": {
+                        "heimdall": {
+                            "status": "done",
+                            "approved_prompt_summary": [
+                                "Synthesize technical intent in Heimdall Phase 3",
+                                "Default include_verbatim_prompts to false in PR hook",
+                            ],
+                        }
+                    },
+                }
+            ],
+        }
+        state_html.write_text(
+            f'<!DOCTYPE html><html><body data-session-id="abc-session">'
+            f'<script type="application/json" id="odin-iteration-ledger">{json.dumps(ledger)}</script>'
+            f"</body></html>",
+            encoding="utf-8",
+        )
+        loaded = self.hook.load_approved_prompt_summary("abc-session", cwd=self.tmp.name)
+        self.assertEqual(
+            loaded,
+            [
+                "Synthesize technical intent in Heimdall Phase 3",
+                "Default include_verbatim_prompts to false in PR hook",
+            ],
+        )
+
+        self.hook.configure({"label": "ai-generated"})
+        pl = {
+            **self.payload('gh pr create --title "Curate prompts" --body "## Summary\n- x\n\n### Prompt Summary\n- draft bullet"'),
+            "cwd": self.tmp.name,
+        }
+        out = self.hook.handle_pre_tool_use(pl)
+        new_cmd = out["hookSpecificOutput"]["updatedInput"]["command"]
+        self.assertIn("1. Synthesize technical intent in Heimdall Phase 3", new_cmd)
+        self.assertIn("2. Default include_verbatim_prompts to false in PR hook", new_cmd)
+        self.assertNotIn("draft bullet", new_cmd)
+        self.assertNotIn("Verbatim Session Prompts", new_cmd)
 
     def test_commit_heredoc_unwrapped_when_chained_segment_rebuilds(self):
         self.hook.configure({"label": "ai-generated"})
