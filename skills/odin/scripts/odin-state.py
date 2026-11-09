@@ -603,6 +603,16 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
         if (deltaBtn) {
           const deltaId = deltaBtn.getAttribute("data-delta-id");
           const status = deltaBtn.getAttribute("data-odin-delta-btn") || "applied";
+          const deltaItem = deltaBtn.closest(".odin-top-delta-item");
+          if (
+            status === "dismissed" &&
+            deltaItem &&
+            (deltaItem.getAttribute("data-status") === "in_progress" ||
+              deltaItem.getAttribute("data-has-ticket") === "true" ||
+              Boolean(deltaItem.querySelector('a[href*="mimir-delta"]')))
+          ) {
+            if (!confirm(`Dismiss delta "${deltaId}"? A spawned delta ticket is already in progress.`)) return;
+          }
           deltaBtn.disabled = true;
           try {
             const res = await fetch(`${API_BASE}/api/mimir/apply`, {
@@ -1988,6 +1998,37 @@ ODIN_SAFE_POLLER_FN = """      const lastServerSnapshots = {};
         if (id) delete lastServerSnapshots[id];
       };
 
+      const getDetailsStateKey = (el, idx) => {
+        if (el.id) return `id:${el.id}`;
+        if (el.hasAttribute("data-iteration")) return `iter:${el.getAttribute("data-iteration")}`;
+        if (el.hasAttribute("data-file-path")) return `file:${el.getAttribute("data-file-path")}`;
+        if (el.hasAttribute("data-delta-id")) return `delta:${el.getAttribute("data-delta-id")}`;
+        const sum = el.querySelector(":scope > summary")?.textContent?.trim();
+        return sum ? `sum:${sum}` : `idx:${idx}`;
+      };
+      const snapshotDetailsOpen = (root) => {
+        const map = new Map();
+        if (!root) return map;
+        if (root.tagName === "DETAILS") {
+          map.set(getDetailsStateKey(root, -1), root.open);
+        }
+        root.querySelectorAll("details").forEach((d, i) => {
+          map.set(getDetailsStateKey(d, i), d.open);
+        });
+        return map;
+      };
+      const restoreDetailsOpen = (root, map) => {
+        if (!root || !map || !map.size) return;
+        if (root.tagName === "DETAILS") {
+          const k = getDetailsStateKey(root, -1);
+          if (map.has(k)) root.open = map.get(k);
+        }
+        root.querySelectorAll("details").forEach((d, i) => {
+          const k = getDetailsStateKey(d, i);
+          if (map.has(k)) d.open = map.get(k);
+        });
+      };
+
       async function pollLatestState() {
         if (window.__odinCoEditActive) return;
         const activeEl = document.activeElement;
@@ -2019,6 +2060,9 @@ ODIN_SAFE_POLLER_FN = """      const lastServerSnapshots = {};
             const exBanners = document.getElementById("odin-top-command-banners");
             if (inBanners && exBanners) {
               ["odin-heimdall-gate-banner", "odin-top-signoff-banner", "odin-top-mimir-banner"].forEach((bId) => {
+                if (bId === "odin-top-mimir-banner" && document.querySelector("#odin-top-mimir-banner:hover")) {
+                  return;
+                }
                 const inChild = doc.getElementById(bId);
                 const exChild = document.getElementById(bId);
                 const inHtml = inChild ? inChild.outerHTML : "";
@@ -2027,7 +2071,9 @@ ODIN_SAFE_POLLER_FN = """      const lastServerSnapshots = {};
                 } else if (lastServerSnapshots[bId] !== inHtml) {
                   lastServerSnapshots[bId] = inHtml;
                   if (inChild && exChild) {
-                    exChild.outerHTML = inHtml;
+                    const openMap = snapshotDetailsOpen(exChild);
+                    restoreDetailsOpen(inChild, openMap);
+                    exChild.outerHTML = inChild.outerHTML;
                   } else if (inChild && !exChild) {
                     exBanners.insertAdjacentHTML("beforeend", inHtml);
                   } else if (!inChild && exChild) {
@@ -2052,7 +2098,10 @@ ODIN_SAFE_POLLER_FN = """      const lastServerSnapshots = {};
                   }
                 } else if (lastServerSnapshots[id] !== sig) {
                   lastServerSnapshots[id] = sig;
+                  const openMap = snapshotDetailsOpen(existing);
+                  restoreDetailsOpen(incoming, openMap);
                   existing.innerHTML = incoming.innerHTML;
+                  restoreDetailsOpen(existing, openMap);
                   if (inStatus) existing.setAttribute("data-status", inStatus);
                   changed = true;
                 }
@@ -2523,13 +2572,19 @@ def sync_top_banners_in_html(content: str, ledger: dict, telemetry: dict | None 
 
     if deltas:
         in_progress_deltas = [d for d in deltas if str(d.get("status") or "").lower() == "in_progress"]
+        applied_deltas = [d for d in deltas if str(d.get("status") or "").lower() == "applied"]
+        dismissed_deltas = [d for d in deltas if str(d.get("status") or "").lower() == "dismissed"]
         is_open = " open"
         if len(pending_deltas) > 0:
             header_badge = f'<span class="badge-awaiting_human">⏳ {len(pending_deltas)} PENDING APPROVAL</span>'
         elif len(in_progress_deltas) > 0:
             header_badge = f'<span class="badge-active">⚡ {len(in_progress_deltas)} IN PROGRESS (TICKET SPAWNED)</span>'
+        elif len(applied_deltas) > 0 and len(dismissed_deltas) > 0:
+            header_badge = f'<span class="badge-done">✅ {len(applied_deltas)} APPLIED • 🚫 {len(dismissed_deltas)} DISMISSED</span>'
+        elif len(dismissed_deltas) > 0:
+            header_badge = f'<span class="badge-pending">🚫 {len(dismissed_deltas)} DISMISSED</span>'
         else:
-            header_badge = f'<span class="badge-done">✅ {len(deltas)} APPROVED &amp; APPLIED</span>'
+            header_badge = f'<span class="badge-done">✅ {len(applied_deltas)} APPROVED &amp; APPLIED</span>'
         items_html = []
         for d in deltas:
             d_id = html_mod.escape(str(d.get("id") or "delta"))
@@ -2601,8 +2656,9 @@ def sync_top_banners_in_html(content: str, ledger: dict, telemetry: dict | None 
                 else ""
             )
 
+            has_ticket_attr = "true" if spawned_ticket_url else "false"
             items_html.append(
-                f'          <div class="odin-top-delta-item" data-delta-id="{d_id}" data-status="{html_mod.escape(d_status)}" '
+                f'          <div class="odin-top-delta-item" data-delta-id="{d_id}" data-status="{html_mod.escape(d_status)}" data-has-ticket="{has_ticket_attr}" '
                 f'style="margin-top:0.75rem;padding:0.95rem 1.1rem;border-radius:12px;background:var(--surface-elevated);border:1px solid rgba(168,85,247,0.38);">\n'
                 f'            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.55rem;">\n'
                 f'              <div style="display:flex;align-items:center;gap:0.45rem;flex-wrap:wrap;">\n'
@@ -2944,7 +3000,7 @@ def collapse_prior_details_in_section(sec_body: str, prev_iter: int, phase_label
 def mutate_section_body(content: str, sec_id: str, mutator_fn) -> str:
     sec_pat = SECTION_REGEX_MAP.get(sec_id, re.escape(sec_id))
     pattern = re.compile(
-        rf'(<section\b[^>]*\bid=["\']{sec_pat}["\'][^>]*>\s*(?:<div\b[^>]*\bclass=["\'][^"\']*phase-header[^"\']*["\'][^>]*>(?:(?!</div>)[\s\S])*?</div>|<h2\b[^>]*>(?:(?!</h2>)[\s\S])*?</h2>))((?:(?!</section>)[\s\S])*?)(</section>)',
+        rf'(<section\b[^>]*\bid=["\']{sec_pat}["\'][^>]*>(?:\s*<style\b[^>]*>[\s\S]*?</style>)*\s*(?:<div\b[^>]*\bclass=["\'][^"\']*phase-header[^"\']*["\'][^>]*>(?:(?!</div>)[\s\S])*?</div>|<h2\b[^>]*>(?:(?!</h2>)[\s\S])*?</h2>))((?:(?!</section>)[\s\S])*?)(</section>)',
         re.IGNORECASE,
     )
     match = pattern.search(content)
@@ -5232,6 +5288,16 @@ def sync_parent_mimir_delta_on_completion(
     if not delta_id or not parent_file_str:
         return None
 
+    target_delta_ids: set[str] = set()
+    for single_val in (origin.get("delta_id"), ledger.get("parent_delta_id")):
+        if single_val and str(single_val).strip():
+            target_delta_ids.add(str(single_val).strip())
+    for list_val in (origin.get("delta_ids"), ledger.get("parent_delta_ids")):
+        if isinstance(list_val, (list, tuple, set)):
+            for item in list_val:
+                if item and str(item).strip():
+                    target_delta_ids.add(str(item).strip())
+
     parent_path = Path(parent_file_str)
     if not parent_path.is_absolute():
         parent_path = (Path(AI_DEV_ROOT) / parent_file_str).resolve()
@@ -5248,10 +5314,25 @@ def sync_parent_mimir_delta_on_completion(
         child_rel = str(Path(child_html_path).resolve().relative_to(Path(AI_DEV_ROOT).resolve())).replace("\\", "/")
     except ValueError:
         child_rel = f"odin-states/{Path(child_html_path).name}"
+    child_rel_norm = child_rel.lstrip("/")
+    matched_ids: list[str] = []
+
+    def _matches_child_ticket(d: dict) -> bool:
+        d_id = str(d.get("id") or "").strip()
+        if d_id and d_id in target_delta_ids:
+            return True
+        spawned_rel = str(d.get("spawned_ticket_id") or "").strip().lstrip("/")
+        if spawned_rel and spawned_rel == child_rel_norm:
+            return True
+        return False
+
     changed = False
     for it_obj in p_ledger.get("iterations", []):
         for d in it_obj.get("harness_delta_proposals", []):
-            if d.get("id") == delta_id:
+            if _matches_child_ticket(d):
+                d_id = str(d.get("id") or "").strip()
+                if d_id and d_id not in matched_ids:
+                    matched_ids.append(d_id)
                 if d.get("status") != "applied" or d.get("spawned_ticket_id") != child_rel:
                     d["status"] = "applied"
                     d["spawned_ticket_id"] = child_rel
@@ -5260,7 +5341,10 @@ def sync_parent_mimir_delta_on_completion(
                     d["updated_at"] = now_iso()
                     changed = True
     for d in p_ledger.get("harness_delta_proposals", []):
-        if d.get("id") == delta_id:
+        if _matches_child_ticket(d):
+            d_id = str(d.get("id") or "").strip()
+            if d_id and d_id not in matched_ids:
+                matched_ids.append(d_id)
             if d.get("status") != "applied" or d.get("spawned_ticket_id") != child_rel:
                 d["status"] = "applied"
                 d["spawned_ticket_id"] = child_rel
@@ -5274,6 +5358,7 @@ def sync_parent_mimir_delta_on_completion(
         parent_path.write_text(p_content, encoding="utf-8")
     return {
         "deltaId": delta_id,
+        "deltaIds": matched_ids or sorted(target_delta_ids),
         "parentStateFile": str(parent_path),
         "childTicketId": child_rel,
         "status": "applied",
