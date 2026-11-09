@@ -1654,6 +1654,23 @@
       const deltaListScrollState = new Map();
       const MOSAIC_ROW_GAP_PX = 18;
       let mosaicResizeObserver = null;
+      let isGridHovered = false;
+      let lastProjectsRenderSig = "";
+      let pendingGridRender = false;
+
+      const projectsGridEl = document.getElementById("projects-grid");
+      if (projectsGridEl) {
+        projectsGridEl.addEventListener("mouseenter", () => {
+          isGridHovered = true;
+        });
+        projectsGridEl.addEventListener("mouseleave", () => {
+          isGridHovered = false;
+          if (pendingGridRender) {
+            pendingGridRender = false;
+            renderProjects(true);
+          }
+        });
+      }
 
       function layoutProjectsMosaic() {
         const grid = document.getElementById("projects-grid");
@@ -1690,18 +1707,21 @@
         cards.forEach((card, idx) => {
           const h = card.getBoundingClientRect().height;
           const span = Math.max(1, Math.ceil(h + MOSAIC_ROW_GAP_PX));
-          card.style.gridRowEnd = `span ${span}`;
+          const nextSpan = `span ${span}`;
+          if (card.style.gridRowEnd !== nextSpan) {
+            card.style.gridRowEnd = nextSpan;
+          }
           if (isMosaicPair && maxIdx === 2) {
             if (idx === 2) {
-              card.style.gridColumn = "2";
-              card.style.gridRowStart = "1";
+              if (card.style.gridColumn !== "2") card.style.gridColumn = "2";
+              if (card.style.gridRowStart !== "1") card.style.gridRowStart = "1";
             } else {
-              card.style.gridColumn = "1";
-              card.style.gridRowStart = "";
+              if (card.style.gridColumn !== "1") card.style.gridColumn = "1";
+              if (card.style.gridRowStart !== "") card.style.gridRowStart = "";
             }
           } else {
-            card.style.gridColumn = "";
-            card.style.gridRowStart = "";
+            if (card.style.gridColumn !== "") card.style.gridColumn = "";
+            if (card.style.gridRowStart !== "") card.style.gridRowStart = "";
           }
         });
       }
@@ -1729,13 +1749,18 @@
           if (mode === "recent") {
             return (Number(b.mtime) || 0) - (Number(a.mtime) || 0);
           }
-          const prioDiff = getProjectSortPriority(a) - getProjectSortPriority(b);
+          const prioA = getProjectSortPriority(a);
+          const prioB = getProjectSortPriority(b);
+          const prioDiff = prioA - prioB;
           if (prioDiff !== 0) return prioDiff;
+          if (mode === "open_first" && prioA < 3) {
+            return String(a.slug || "").localeCompare(String(b.slug || ""));
+          }
           return (Number(b.mtime) || 0) - (Number(a.mtime) || 0);
         });
       }
 
-      function renderProjects() {
+      function renderProjects(force = false) {
         const grid = document.getElementById("projects-grid");
         if (!grid) return;
 
@@ -1765,6 +1790,67 @@
           }
           return true;
         }));
+
+        const sig = JSON.stringify({
+          activeFilter,
+          activeSort,
+          activeWorkspace,
+          searchQuery,
+          items: filtered.map(p => ({
+            id: p.id,
+            title: p.title,
+            workspace: p.workspace,
+            archived: p.archived,
+            overallStatus: p.overallStatus,
+            humanStatus: p.humanStatus,
+            humanNote: p.humanNote,
+            awaitingSignoff: p.awaitingSignoff,
+            awaitingHuman: p.awaitingHuman,
+            doneCount: p.doneCount,
+            progressPct: p.progressPct,
+            currentIteration: p.currentIteration,
+            maxIterations: p.maxIterations,
+            branch: p.branch,
+            worktreeShort: p.worktreeShort,
+            worktreeDirty: p.worktreeDirty,
+            worktreeDirtyCount: p.worktreeDirtyCount,
+            appPort: p.appPort,
+            appPortLive: p.appPortLive,
+            backendPort: p.backendPort,
+            backendPortLive: p.backendPortLive,
+            collisionWarning: p.collisionWarning,
+            openQuestions: p.openQuestions,
+            phases: p.phases,
+            agentState: p.telemetry?.agentState,
+            watcherArmed: p.telemetry?.watcherArmed,
+            paused: p.telemetry?.paused,
+            lastToolName: p.telemetry?.lastToolName,
+            harnessDeltas: p.harnessDeltas
+          }))
+        });
+
+        if (!force && sig === lastProjectsRenderSig) {
+          const byId = new Map(filtered.map(p => [p.id, p]));
+          grid.querySelectorAll(".card-slug[data-mtime]").forEach((slugEl) => {
+            const pid = slugEl.getAttribute("data-project-id") || "";
+            const p = byId.get(pid);
+            const mtime = p ? (Number(p.mtime) || 0) : Number(slugEl.getAttribute("data-mtime") || 0);
+            if (p) slugEl.setAttribute("data-mtime", String(mtime));
+            const fname = p ? p.filename : (slugEl.getAttribute("data-filename") || "");
+            const doneCount = p ? p.doneCount : (slugEl.getAttribute("data-done-count") || "0");
+            const totalPhases = p ? (p.totalPhases || 4) : (slugEl.getAttribute("data-total-phases") || "4");
+            const nextText = `${fname} • Updated ${relativeTime(mtime)} (${doneCount}/${totalPhases} AI phases)`;
+            if (slugEl.textContent !== nextText) slugEl.textContent = nextText;
+          });
+          return;
+        }
+
+        if (!force && isGridHovered && lastProjectsRenderSig !== "") {
+          pendingGridRender = true;
+          return;
+        }
+        lastProjectsRenderSig = sig;
+        pendingGridRender = false;
 
         if (filtered.length === 0) {
           grid.removeAttribute("data-mosaic-pair");
@@ -1898,6 +1984,8 @@
           const cardDeltas = Array.isArray(p.harnessDeltas) ? p.harnessDeltas : [];
           const cardPendingDeltas = cardDeltas.filter(d => (d.status || "pending") === "pending").length;
           const cardInProgressDeltas = cardDeltas.filter(d => String(d.status || "").toLowerCase() === "in_progress").length;
+          const cardAppliedDeltas = cardDeltas.filter(d => String(d.status || "").toLowerCase() === "applied").length;
+          const cardDismissedDeltas = cardDeltas.filter(d => String(d.status || "").toLowerCase() === "dismissed").length;
           const isDeltaOpen = deltaBannerOpenState.has(p.id)
             ? deltaBannerOpenState.get(p.id)
             : (cardPendingDeltas > 0 || cardInProgressDeltas > 0);
@@ -1905,7 +1993,11 @@
             ? `${cardPendingDeltas} Pending Approval`
             : cardInProgressDeltas > 0
               ? `${cardInProgressDeltas} In Progress (Ticket Spawned)`
-              : `${cardDeltas.length} Applied`;
+              : (cardAppliedDeltas > 0 && cardDismissedDeltas > 0)
+                ? `${cardAppliedDeltas} Applied, ${cardDismissedDeltas} Dismissed`
+                : cardDismissedDeltas > 0
+                  ? `${cardDismissedDeltas} Dismissed`
+                  : `${cardAppliedDeltas} Applied`;
           const cardDeltaBannerHtml = cardDeltas.length > 0
             ? `<details class="card-delta-banner" data-project-id="${escapeHtml(p.id)}" data-has-pending="${cardPendingDeltas > 0}" ${isDeltaOpen ? "open" : ""}>
                 <summary>
@@ -1954,7 +2046,7 @@
                           ${spawnedLinkHtml}
                           ${dst !== "applied" ? `<button type="button" class="btn btn-emerald" style="padding:0.2rem 0.55rem;font-size:0.69rem;font-weight:700;" data-action="mimir-card-spawn" data-id="${escapeHtml(p.id)}" data-delta-id="${escapeHtml(d.id)}" data-file-path="${escapeHtml(p.filepath || p.id || "")}">${spawnBtnLabel}</button>` : ""}
                           ${dst !== "applied" ? `<button type="button" class="btn" style="padding:0.2rem 0.55rem;font-size:0.69rem;" data-action="mimir-card-status" data-id="${escapeHtml(p.id)}" data-delta-id="${escapeHtml(d.id)}" data-status="applied" title="Mark this delta as already applied without spawning a standalone Odin Delta Ticket">☑️ Mark Already Applied</button>` : ""}
-                          ${dst !== "dismissed" ? `<button type="button" class="btn" style="padding:0.2rem 0.55rem;font-size:0.69rem;" data-action="mimir-card-status" data-id="${escapeHtml(p.id)}" data-delta-id="${escapeHtml(d.id)}" data-status="dismissed">🚫 Dismiss</button>` : ""}
+                          ${dst !== "dismissed" ? `<button type="button" class="btn" style="padding:0.2rem 0.55rem;font-size:0.69rem;" data-action="mimir-card-status" data-id="${escapeHtml(p.id)}" data-delta-id="${escapeHtml(d.id)}" data-status="dismissed" data-current-status="${escapeHtml(dst)}" data-has-ticket="${Boolean(spawnedTicketId)}">🚫 Dismiss</button>` : ""}
                           ${dst !== "pending" ? `<button type="button" class="btn btn-gold" style="padding:0.2rem 0.55rem;font-size:0.69rem;" data-action="mimir-card-status" data-id="${escapeHtml(p.id)}" data-delta-id="${escapeHtml(d.id)}" data-status="pending">↩️ Reopen</button>` : ""}
                         </div>
                       </div>
@@ -1979,7 +2071,7 @@
                   <span class="workspace-pill" title="Workspace">📁 ${escapeHtml(p.workspace)}</span>
                 </div>
                 <a class="card-title-link" href="${escapeHtml(projectHref)}">${escapeHtml(p.title)}</a>
-                <div class="card-slug">${escapeHtml(p.filename)} • Updated ${relativeTime(p.mtime)} (${p.doneCount}/${totalPhases} AI phases)</div>
+                <div class="card-slug" data-project-id="${escapeHtml(p.id)}" data-mtime="${p.mtime || 0}" data-filename="${escapeHtml(p.filename)}" data-done-count="${p.doneCount}" data-total-phases="${totalPhases}">${escapeHtml(p.filename)} • Updated ${relativeTime(p.mtime)} (${p.doneCount}/${totalPhases} AI phases)</div>
                 ${envRowHtml}
                 <div class="progress-track" aria-label="Completion progress">
                   <div class="progress-fill" style="width:${p.progressPct}%"></div>
@@ -2061,7 +2153,7 @@
           if (data.telemetry) renderTelemetry(data.telemetry);
           updateWorkspaceOptions();
           updateKpis();
-          renderProjects();
+          renderProjects(true);
           if (toastTitle) {
             const extra = (data.cleanupNotes && data.cleanupNotes.length) ? " (" + data.cleanupNotes.join("; ") + ")" : "";
             notifyUser(toastTitle, toastBody + extra, soundKind);
@@ -2307,7 +2399,7 @@
                 <div style="display:flex;gap:0.4rem;flex-wrap:wrap;">
                   ${st !== "applied" ? `<button type="button" class="btn btn-emerald" style="padding:0.25rem 0.65rem;font-size:0.73rem;font-weight:700;" data-mimir-action="spawn-ticket" data-delta-id="${escapeHtml(d.id)}" data-source-file="${escapeHtml(sourceFile)}">⚡ Approve &amp; Spawn Delta Ticket</button>` : ""}
                   ${st !== "applied" ? `<button type="button" class="btn" style="padding:0.25rem 0.6rem;font-size:0.72rem;" data-mimir-action="mark-status" data-status="applied" data-delta-id="${escapeHtml(d.id)}" data-source-file="${escapeHtml(sourceFile)}">☑️ Mark Already Applied</button>` : ""}
-                  ${st !== "dismissed" ? `<button type="button" class="btn" style="padding:0.25rem 0.6rem;font-size:0.73rem;" data-mimir-action="mark-status" data-status="dismissed" data-delta-id="${escapeHtml(d.id)}" data-source-file="${escapeHtml(sourceFile)}">🚫 Dismiss</button>` : ""}
+                  ${st !== "dismissed" ? `<button type="button" class="btn" style="padding:0.25rem 0.6rem;font-size:0.73rem;" data-mimir-action="mark-status" data-status="dismissed" data-delta-id="${escapeHtml(d.id)}" data-source-file="${escapeHtml(sourceFile)}" data-current-status="${escapeHtml(st)}" data-has-ticket="${Boolean(spawnedTicketId)}">🚫 Dismiss</button>` : ""}
                   ${st !== "pending" ? `<button type="button" class="btn btn-gold" style="padding:0.25rem 0.6rem;font-size:0.73rem;" data-mimir-action="mark-status" data-status="pending" data-delta-id="${escapeHtml(d.id)}" data-source-file="${escapeHtml(sourceFile)}">↩️ Reopen</button>` : ""}
                 </div>
               </div>
@@ -2344,7 +2436,7 @@
           allProjects = data.projects || allProjects;
           if (data.mimirAudit || data.audit) mimirAuditData = data.mimirAudit || data.audit;
           renderMimirAudit(activeMimirProjectFilter);
-          renderProjects();
+          renderProjects(true);
           notifyUser("🧠 Harness Delta Updated", `${deltaId} marked ${status.toUpperCase()}.`, status === "applied" ? "done" : "phase");
         } catch (err) {
           showToast("🚨 Mímir Update Error", err.message || String(err));
@@ -2375,7 +2467,7 @@
           if (data.projects) allProjects = data.projects;
           if (data.mimirAudit || data.audit) mimirAuditData = data.mimirAudit || data.audit;
           renderMimirAudit(activeMimirProjectFilter);
-          renderProjects();
+          renderProjects(true);
           notifyUser(
             "🎫 Mímir Delta Ticket Spawned",
             `Spawned ${data.spawnedTicketId} in Phase 1 (copied /odin launch prompt to clipboard).`,
@@ -2567,6 +2659,16 @@
         } else if (action === "mimir-card-status") {
           const deltaId = btn.getAttribute("data-delta-id");
           const nextStatus = btn.getAttribute("data-status") || "applied";
+          const item = (proj.harnessDeltas || []).find(d => d.id === deltaId);
+          if (
+            nextStatus === "dismissed" &&
+            (btn.getAttribute("data-current-status") === "in_progress" ||
+              btn.getAttribute("data-has-ticket") === "true" ||
+              item?.status === "in_progress" ||
+              Boolean(item?.spawned_ticket_id))
+          ) {
+            if (!confirm(`Dismiss delta "${deltaId}"? A spawned delta ticket is already in progress.`)) return;
+          }
           markMimirDeltaStatus(deltaId, nextStatus, proj.filepath || "");
         }
       });
@@ -2618,6 +2720,15 @@
           await spawnMimirDeltaTicket(deltaId, sourceFile, btn);
         } else if (action === "mark-status") {
           const nextStatus = btn.getAttribute("data-status") || "applied";
+          if (
+            nextStatus === "dismissed" &&
+            (btn.getAttribute("data-current-status") === "in_progress" ||
+              btn.getAttribute("data-has-ticket") === "true" ||
+              item?.status === "in_progress" ||
+              Boolean(item?.spawned_ticket_id))
+          ) {
+            if (!confirm(`Dismiss delta "${deltaId}"? A spawned delta ticket is already in progress.`)) return;
+          }
           const sourceFile = btn.getAttribute("data-source-file") || item.source_file || item.state_file || "";
           await markMimirDeltaStatus(deltaId, nextStatus, sourceFile);
         }
@@ -2707,23 +2818,23 @@
           document.querySelectorAll(".tab-btn").forEach(b => b.setAttribute("aria-selected", "false"));
           btn.setAttribute("aria-selected", "true");
           activeFilter = btn.getAttribute("data-filter");
-          renderProjects();
+          renderProjects(true);
         });
       });
 
       document.getElementById("sort-select")?.addEventListener("change", (e) => {
         activeSort = e.target.value || "open_first";
-        renderProjects();
+        renderProjects(true);
       });
 
       document.getElementById("workspace-select")?.addEventListener("change", (e) => {
         activeWorkspace = e.target.value;
-        renderProjects();
+        renderProjects(true);
       });
 
       document.getElementById("search-input")?.addEventListener("input", (e) => {
         searchQuery = e.target.value.trim().toLowerCase();
-        renderProjects();
+        renderProjects(true);
       });
 
       document.getElementById("archive-done-btn")?.addEventListener("click", () => {
