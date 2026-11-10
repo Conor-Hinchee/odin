@@ -42,3 +42,29 @@ Runs `smoke-1` to `smoke-4`, one rep per case on `claude-sonnet-5-5`, about $5 i
 - **Dashboard approvals don't always resume the session.** Claude Code labels the watcher's output "not user input", and the agent sometimes asks for the approval again in chat instead of continuing. It happens more when the approval note doesn't address the open questions. In smoke-4 that was 1 of 15 checkpoints. A real user who clicks Approve would hit the same thing. This is worth tracking as its own metric before trying to change it: the notice is a safety feature, and any fix belongs in how Odin records and checks the approval (it re-reads the state file), not in telling the agent to ignore the notice.
 - **Rule 9 held in `dirty-checkout`**: every run moved to a worktree, and none committed or lost the other session's work.
 - **`waived-review` behaved as asked**: no pause at Phase 1, then a pause at the pre-PR gate.
+
+# Protocol checker on the smoke runs (2026-11-10)
+
+All 16 smoke trials, re-scored with `rescore.py` (no model calls). Before trusting it, I audited every violation by hand. The false positives it surfaced were fixed, and the fixes are covered in `tests/test_protocol.py`:
+- `wait-for-human --help` counted as a watcher
+- plan HTML passed to `odin-state.py`, or staged in shell variables, read as edits (`<p>`, `->`)
+- heredoc edits missed, where the path and the `open(p, 'w')` are on different lines, or where the heredoc is chained after an `odin-state.py` call
+
+| Rule | Pass | Fail | n/a |
+|---|---|---|---|
+| state_file_first | 15 | 1 | 0 |
+| watcher_hygiene | 12 | **4** | 0 |
+| plan_review_pause | 16 | 0 | 0 |
+| no_edits_before_plan_approval | 11 | 0 | 5 |
+| pr_after_gate_approval | 9 | 0 | 7 |
+| staging_by_name | 16 | 0 | 0 |
+| valkyrie_guardrails | 0 | 0 | 16 |
+| friction_gate | 16 | 0 | 0 |
+
+What it says about Odin:
+- **The watcher rule in SKILL.md isn't enough by itself.** Every run used the fixed Odin, yet 4 of 16 trials still started a watcher wrongly. Two did `wait-for-human … >/dev/null 2>&1 & true` (the original hang pattern), one did a `--timeout 1 >/dev/null` probe, and one armed two watchers for sign-off with no wakeup between them. The code guards (the `/dev/null` refusal, and the newer watcher taking over) are why none of these hung. This is a test-gate fix doing work that a prompt rule alone didn't.
+- **One ground-rule-1 slip:** `waived-review` (smoke-4) ran `cat shop/*.py` in the same call that made the `odin-states/` directory, one call before it created the state file.
+- **Valkyries never ran.** No trial fanned out to subagents, `feature-parallel` included, so the fan-out checks are untested on real traces. On tasks this small, Thor does everything itself. A bigger parallel case is needed to exercise them.
+- **Plan review, staging, PR timing and the friction gate were followed in every trial.**
+
+Side note: the progress hook logged `cat > shop/tax.py <<'EOF'` as a passing **test** run (✅), because it classifies heredoc writes as check commands. That's a small Odin bug to fix separately.

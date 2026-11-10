@@ -1,6 +1,6 @@
 # Odin eval harness: plan
 
-Status: milestone 0 done (see [SPIKE.md](SPIKE.md)). Runner and scripted partner prototypes exist. Branch `feat/eval-harness` (worktree `../odin-evals`).
+Status: milestones 0–3 done, plus the outcome grader and the protocol checker (see [SPIKE.md](SPIKE.md) and [README.md](README.md)). Next: the LLM judge (milestone 4), then the first experiment. Branch `feat/eval-harness` (worktree `../odin-evals`).
 
 ## The question this answers
 

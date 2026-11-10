@@ -84,6 +84,23 @@ def summarize(run_dir: Path) -> str:
                      f"{checks}/{n} | {oos}/{n} | {finished}/{n} | {stalled}/{n} | {(sum(c) / len(c)) if c else 0:.2f} | "
                      f"{(sum(w) / len(w)) if w else 0:.0f} | {err_by.get(key, 0)} |")
 
+    with_protocol = [r for r in rows if (r.get("protocol") or {}).get("checks")]
+    if with_protocol:
+        clean = sum(bool(r["protocol"]["pass"]) for r in with_protocol)
+        lines += ["", "## Protocol (Odin's own rules)", "",
+                  f"**Followed every rule:** {fmt_rate(clean, len(with_protocol))}", "",
+                  "| Rule | Pass | Fail | n/a |", "|---|---|---|---|"]
+        names = list(with_protocol[0]["protocol"]["checks"].keys())
+        for name in names:
+            st = Counter(r["protocol"]["checks"].get(name, {}).get("status", "n/a") for r in with_protocol)
+            lines.append(f"| {name} | {st['pass']} | {st['fail']} | {st['n/a']} |")
+        viol = [(r, name) for r in with_protocol for name in r["protocol"]["violations"]]
+        if viol:
+            lines += ["", "Violations:", ""]
+            for r, name in viol:
+                lines.append(f"- `{r['case']}/{r['mode']}/r{r['rep']}` {name}: "
+                             f"{r['protocol']['checks'][name]['detail'][:160]}")
+
     unfinished = [r for r in rows if "finished" in r and not r["finished"]]
     if unfinished:
         lines += ["", "## Didn't finish the loop", ""]

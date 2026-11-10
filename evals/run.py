@@ -30,6 +30,8 @@ import time
 from pathlib import Path
 
 EVALS = Path(__file__).resolve().parent
+sys.path.insert(0, str(EVALS))
+import protocol  # noqa: E402
 REPO_ROOT = EVALS.parent
 CASES_DIR = EVALS / "cases"
 DEFAULT_MODEL = "claude-sonnet-5-5"
@@ -358,6 +360,10 @@ def run_trial(case: dict, mode: str, rep: int, args, run_dir: Path) -> tuple:
     order = ["huginn-plan", "thor-execution", "heimdall-validation", "hlidskjalf-judge", "human-validation"]
     row["stopped_before"] = "" if row["finished"] else next(
         (ph for ph in order if row["phases"].get(ph) != "done"), "")
+    try:
+        row["protocol"] = protocol.check_trial(out, case, CASES_DIR / case["id"])
+    except Exception as exc:  # a checker bug must not drop the trial
+        row["protocol"] = {"error": repr(exc), "violations": [], "pass": None, "checks": {}}
     return "result", row
 
 
