@@ -91,6 +91,7 @@ Odin alerts you on every phase change in up to three places:
 - **Browser.** Open the dashboard or a state page in a regular browser and click **🔔 Enable Alerts**. Clicking a notification focuses the tab. Browsers embedded in other apps, such as the Claude Code browser pane, usually block notifications; there you get an in-page toast and chime instead.
 - **Desktop banner.** On macOS, install [terminal-notifier](https://github.com/julienXX/terminal-notifier) (`brew install terminal-notifier`) so clicking a banner opens the task's page. Without it, Odin falls back to `osascript`, whose banners open Script Editor when clicked. On Linux, banners use `notify-send`.
 - **No duplicates.** While an Odin page with browser notifications allowed is open, it covers its own task (the dashboard covers every task) and the desktop banner is skipped.
+- **Off switch.** Set `ODIN_NOTIFY=0` in the environment to silence desktop banners and chimes, for example in scripted or eval runs.
 
 ### Remote access
 

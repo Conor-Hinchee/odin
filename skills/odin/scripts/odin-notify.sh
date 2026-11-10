@@ -8,6 +8,9 @@
 # opens that task's page. The banner is skipped when an open Odin page with browser notifications
 # allowed already covers the task, so the alert arrives once.
 
+# ODIN_NOTIFY=0 silences banners and chimes (eval runs, CI, scripted sessions).
+[ "${ODIN_NOTIFY:-1}" = "0" ] && exit 0
+
 PHASE_TITLE="${1:-Odin Allfather}"
 MESSAGE="${2:-Phase update complete.}"
 STATUS="${3:-phase}"
