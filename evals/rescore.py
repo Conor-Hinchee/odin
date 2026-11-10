@@ -26,7 +26,7 @@ def rescore_row(row: dict, run_dir: Path) -> dict:
     row["phases"] = run.final_phases(out)
     row.update(run.loop_status(row["mode"], row["phases"], out))
     row["opened_pr"] = run.opened_pr(out)
-    row["protocol"] = ({"violations": [], "pass": None, "checks": {}} if row["mode"] == "plain"
+    row["protocol"] = ({"violations": [], "pass": None, "checks": {}} if row["mode"] in ("plain", "planmode")
                        else protocol.check_trial(out, case, run.CASES_DIR / row["case"]))
     return row
 

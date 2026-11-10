@@ -2,9 +2,9 @@
 
 Odin is a Claude Code plugin that runs development tasks through a fixed loop: a plan, human approval, execution (optionally fanned out to subagents), verification, a pre-PR review, and human sign-off. Each task gets a live state file and a local dashboard for approvals. Odin adds a lot of process. I wanted to know what that process buys, so I built an eval harness for it and ran a pre-registered experiment against plain Claude Code.
 
-**Short version:** on small, well-specified tasks, plain Claude Code got the same correct result at a quarter of the cost and time. The eval found two real defects in Odin, and one of them is now fixed and re-measured. Most of the work, though, went into finding bugs in the harness itself. Five of them would have changed a headline number.
+**Short version:** on small, well-specified tasks, plain Claude Code got the same correct result at a quarter of the cost and time. The eval found two real defects in Odin, and one of them is now fixed and re-measured. Most of the work, though, went into finding bugs in the harness itself. Five of them would have changed a headline number. A second experiment then tried to give Odin's plan review something to catch, and couldn't: plain Claude Code read all six hand-built traps correctly on its own.
 
-About $23 of API spend in all, every run included.
+About $24 of API spend in all, every run of both experiments included.
 
 ## The harness
 
@@ -85,7 +85,7 @@ Here's what I'd tell anyone building agent evals: **audit the transcripts before
 - **The protocol checker had false positives.** A chat nudge wasn't counted as the approval it was, and a multi-line plan containing the words "(git rm)" was read as a deletion. Shell splitting is now quote-aware.
 - **PR bodies written to a file were invisible.** Some agents passed `--body-file`, which the fake `gh` logged only as a path, so the judge would have scored a good description as empty. It now keeps a copy.
 
-Each fix has a regression test. All of them are free to run: 56 tests for the eval harness and 60 for Odin.
+Each fix has a regression test. All of them are free to run: 71 tests for the eval harness and 66 for Odin.
 
 ## Limitations
 
@@ -95,12 +95,21 @@ Each fix has a regression test. All of them are free to run: 56 tests for the ev
 - **The scripted partner approves everything,** so a review that catches a bad plan is never tested.
 - **The sandbox gives itself away.** `git push` prints the local `file://` remote, and Odin sometimes concludes "no GitHub here" and skips the PR. That makes "opened a PR" unreliable for Odin.
 
+## Experiment 2: could a plan review catch anything?
+
+Experiment 1's partner approved everything, so the plan gate never had a chance to catch a wrong plan. Experiment 2 ([EXPERIMENT-2.md](EXPERIMENT-2.md)) was meant to give it one. I built cases whose obvious implementation passes the visible tests but isn't what the human meant, and a reviewing partner that knows the intent. The partner uses a model (`claude -p`, no tools, structured output) to approve plans or send them back, and runs the hidden tests on code. There were three arms: Odin, Claude Code's own plan mode, and plain.
+
+The pre-flight ended it. Across **six traps**, three with a clue in the repo and three with none, **plain Claude Code built the intended reading every time**, with no review at all: it applied coupons in turn, counted an order as activity, and rounded tax per line "so the receipt always adds up". The plan gate never had a wrong plan to catch. I stopped at about $1 instead of spending $10 on a run whose answer was already clear, and wrote down why.
+
+The useful result is the boundary it draws. On a single ambiguous decision where one reading is more careful, the model finds the careful one. A plan review earns its keep only for preferences that live in the human's head, or for decisions on bigger tasks that interact. That narrows what Odin's gates have to prove, and the harness now has the reviewer, the plan-mode arm and the correction plumbing to test either one.
+
 ## Next
 
 - Calibrate the judge against hand labels.
 - Redesign how dashboard approvals reach the agent, then re-measure the nudge rate.
-- Add harder cases that get off the correctness ceiling: a cross-module refactor, a fix whose obvious version breaks a hidden invariant, and a task big enough to fan out.
+- Add harder cases that get off the correctness ceiling: a cross-module refactor, and a task big enough to fan out, with several decisions that interact (Experiment 3).
+- Test plan review on preferences only the human holds: the Experiment 2 plumbing runs this as is, once a case's intent is set to the reading the agent doesn't pick.
 
 ## Reproduce
 
-Commands and setup: [README.md](README.md). Pre-registration, every run and every audit: [EXPERIMENT-1.md](EXPERIMENT-1.md). Earlier lessons: [SPIKE.md](SPIKE.md).
+Commands and setup: [README.md](README.md). Pre-registration, every run and every audit: [EXPERIMENT-1.md](EXPERIMENT-1.md) and [EXPERIMENT-2.md](EXPERIMENT-2.md). Earlier lessons: [SPIKE.md](SPIKE.md).

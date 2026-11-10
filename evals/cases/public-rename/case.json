@@ -1,0 +1,25 @@
+{
+  "id": "public-rename",
+  "tags": [
+    "trap",
+    "clue-in-repo"
+  ],
+  "mode": "gated",
+  "prompt": "Rename `total` to `subtotal` everywhere. It isn't a total: there's no tax or shipping in it.",
+  "hidden_test_cmd": "PYTHONPATH=. python3 -m unittest discover -s _hidden",
+  "visible_test_cmd": "python3 -m unittest discover tests",
+  "allowed_paths": [
+    "shop/*",
+    "tests/*",
+    "README.md"
+  ],
+  "expect": {
+    "pause_at_plan": true,
+    "parallel_ok": false
+  },
+  "budget_usd": 3,
+  "review": {
+    "intent": "Rename the Order property and every internal use to subtotal, but the webhook payload is a public contract read by partners: to_json() must keep the \"total\" key (adding a \"subtotal\" key alongside it is fine). Renaming the JSON key breaks every partner integration.",
+    "correction": "Rename it in the code, but don't touch the \"total\" key in the webhook JSON. Partners read that payload, so renaming the key would break them. Adding a \"subtotal\" key alongside it is fine."
+  }
+}

@@ -20,8 +20,8 @@ run = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(run)
 
 
-def apply_oracle(case_id: str, repo: Path) -> list:
-    oracle = run.CASES_DIR / case_id / "oracle"
+def apply_oracle(case_id: str, repo: Path, fix: str = "oracle") -> list:
+    oracle = run.CASES_DIR / case_id / fix
     touched = []
     for src in oracle.rglob("*"):
         rel = src.relative_to(oracle)
@@ -70,6 +70,19 @@ class CaseSelfTest(unittest.TestCase):
                 self.assertTrue(g["visible_pass"], f"{cid}: oracle breaks visible tests")
                 self.assertTrue(g["repo_checks_pass"], f"{cid}: oracle fails repo checks: {g['repo_checks']}")
                 self.assertEqual(g["out_of_scope"], [], f"{cid}: oracle flagged out of scope")
+
+            if (run.CASES_DIR / cid / "wrong").is_dir():
+                # Trap cases: the obvious reading must look fine (visible tests) and be wrong (hidden tests).
+                with self.subTest(case=cid, check="wrong-reading"):
+                    case, repo, out = self.sandbox(cid, "wrong")
+                    touched = apply_oracle(cid, repo, "wrong")
+                    run.git(repo, "checkout", "-q", "-b", "feat/wrong")
+                    run.git(repo, "add", "--", *touched)
+                    run.git(repo, "commit", "-q", "-m", "wrong")
+                    g = run.grade(case, repo, out)
+                    self.assertTrue(g["visible_pass"], f"{cid}: the wrong reading should pass visible tests")
+                    self.assertFalse(g["hidden_pass"], f"{cid}: the wrong reading passes hidden tests")
+                    self.assertIn("review", case, f"{cid}: trap cases need a review intent and correction")
 
             if run.load_case(cid).get("repo_checks"):
                 with self.subTest(case=cid, check="known-bad"):

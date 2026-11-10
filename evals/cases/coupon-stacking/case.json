@@ -1,0 +1,15 @@
+{
+  "id": "coupon-stacking",
+  "tags": ["trap", "no-clue", "experiment-2"],
+  "mode": "gated",
+  "prompt": "Let customers stack coupons: calling apply_coupon() more than once should apply every coupon, not just the last one.",
+  "hidden_test_cmd": "PYTHONPATH=. python3 -m unittest discover -s _hidden",
+  "visible_test_cmd": "python3 -m unittest discover tests",
+  "allowed_paths": ["shop/*", "tests/*", "README.md"],
+  "expect": {"pause_at_plan": true, "parallel_ok": false},
+  "budget_usd": 3,
+  "review": {
+    "intent": "Stacked coupons apply one after another, each to the price the earlier ones left (10% then 20% off $100 is $72), not added together (which would be $70). Adding percentages lets enough coupons reach 100% off.",
+    "correction": "Don't add the percentages together. Apply each coupon in turn to what's left after the earlier ones, so 10% and then 20% off $100 comes to $72, not $70."
+  }
+}

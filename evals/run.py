@@ -31,7 +31,8 @@ from pathlib import Path
 
 EVALS = Path(__file__).resolve().parent
 sys.path.insert(0, str(EVALS))
-import protocol  # noqa: E402
+import protocol
+import reviewer  # noqa: E402
 REPO_ROOT = EVALS.parent
 CASES_DIR = EVALS / "cases"
 DEFAULT_MODEL = "claude-sonnet-5-5"
@@ -269,7 +270,7 @@ def start_server(odin_dir: str, out: Path, env: dict) -> tuple:
 
 def build_cmd(case: dict, mode: str, args) -> list:
     """The claude command line for one trial. `plain` is Claude Code with no plugins at all."""
-    if mode == "plain":
+    if mode in ("plain", "planmode"):  # Claude Code with no plugins; planmode starts in its plan mode
         prompt, plugin = case["prompt"] + PLAIN_SUFFIX, []
     else:
         prompt = f"/odin:odin {case['prompt']}" + (WAIVER_SUFFIX if mode == "waiver" else "")
@@ -280,17 +281,55 @@ def build_cmd(case: dict, mode: str, args) -> list:
         "--settings", json.dumps({"enabledPlugins": {"odin@odin": False}}),
         *ISOLATION,
         "--output-format", "stream-json", "--verbose",
-        "--permission-mode", "bypassPermissions",
+        "--permission-mode", "plan" if mode == "planmode" else "bypassPermissions",
         "--max-budget-usd", str(case["budget_usd"]),
         "--model", args.model,
     ]
 
 
-def resume_cmd(cmd: list, session_id: str, message: str) -> list:
+def resume_cmd(cmd: list, session_id: str, message: str, permission: str | None = None) -> list:
     """The same command line, resuming `session_id` with `message` as the next user turn."""
     out = list(cmd)
     out[out.index("-p") + 1] = message
+    if permission:
+        out[out.index("--permission-mode") + 1] = permission
     return out + ["--resume", session_id]
+
+
+PLAN_FILE = re.compile(r"/\.claude/plans/[^/]+\.md$")
+
+
+def latest_plan(events: list) -> str:
+    """Plan mode's plan: the last file it wrote under ~/.claude/plans (headless plan mode never calls
+    ExitPlanMode), else its last ExitPlanMode input, else its final message."""
+    # The plan file wins: ExitPlanMode's text can be a one-line pointer to it ("See plan file: ...").
+    plan_file, exit_plan, final = "", "", ""
+    for e in events:
+        if e.get("type") == "assistant":
+            for c in e.get("message", {}).get("content", []):
+                if c.get("type") != "tool_use":
+                    continue
+                inp = c.get("input") or {}
+                if c.get("name") == "Write" and PLAN_FILE.search(str(inp.get("file_path", ""))):
+                    plan_file = inp.get("content") or plan_file
+                elif c.get("name") == "ExitPlanMode" and inp.get("plan"):
+                    exit_plan = inp["plan"]
+        elif e.get("type") == "result":
+            final = e.get("result") or final
+    return plan_file or exit_plan or final
+
+
+def remove_plan_files(events: list) -> None:
+    """Headless plan mode writes into the user's ~/.claude/plans; don't leave trial plans there."""
+    for e in events:
+        for c in e.get("message", {}).get("content", []) if e.get("type") == "assistant" else []:
+            path = str((c.get("input") or {}).get("file_path", "")) if c.get("type") == "tool_use" else ""
+            if PLAN_FILE.search(path) and Path(path).is_file() and Path(path).parent == Path.home() / ".claude" / "plans":
+                Path(path).unlink()
+
+
+APPROVED = "Approved. Go ahead."
+FIX_ON_BRANCH = " Please fix it on the same branch and update the PR."
 
 
 def read_events(transcript: Path) -> list:
@@ -354,7 +393,7 @@ def opened_pr(out: Path) -> bool:
 
 def loop_status(mode: str, phases: dict, out: Path) -> dict:
     """finished / stopped_before / stalled_at. Plain Claude Code has no phases: it finished if it opened a PR."""
-    if mode == "plain":
+    if mode in ("plain", "planmode"):
         done = opened_pr(out)
         return {"stalled_at": [], "finished": done, "stopped_before": "" if done else "pr"}
     order = ["huginn-plan", "thor-execution", "heimdall-validation", "hlidskjalf-judge", "human-validation"]
@@ -372,7 +411,7 @@ def drive(cmd: list, repo: Path, env: dict, out: Path, transcript: Path, started
     """Run one `claude -p` invocation, appending to the transcript, with the hard and idle timeouts."""
     status, rc = "completed", None
     with open(transcript, "a") as tf, open(out / "stderr.log", "a") as ef:
-        proc = subprocess.Popen(cmd, cwd=repo, env=env, stdout=tf, stderr=ef, text=True)
+        proc = subprocess.Popen(cmd, cwd=repo, env=env, stdout=tf, stderr=ef, text=True, stdin=subprocess.DEVNULL)
         last_size, last_change = transcript.stat().st_size, time.time()
         while True:
             rc = proc.poll()
@@ -392,6 +431,49 @@ def drive(cmd: list, repo: Path, env: dict, out: Path, transcript: Path, started
                 break
             time.sleep(2)
     return status, rc
+
+
+def review_turn(case: dict, mode: str, repo: Path, out: Path, transcript: Path, checkpoints: list,
+                started: float) -> tuple:
+    """After a plain/planmode turn ends: review it like the human would. Returns (next message, permission
+    mode) to resume with, or (None, None) when the trial is done. Appends to `checkpoints`."""
+    events = read_events(transcript)
+    corrections = sum(1 for c in checkpoints if c.get("correction"))
+    t = round(time.time() - started, 1)
+    plan_pending = mode == "planmode" and not any(c["kind"] == "plan" and not c.get("correction") for c in checkpoints)
+    if plan_pending:
+        rec = reviewer.review_plan(case, latest_plan(events))
+        wrong = rec["verdict"] == "revise"
+        if wrong and corrections < reviewer.MAX_CORRECTIONS:
+            checkpoints.append({"kind": "plan", "t": t, **rec, "correction": True})
+            return case["review"]["correction"], "plan"  # revise the plan, still in plan mode
+        checkpoints.append({"kind": "plan", "t": t, **rec, "correction": False, "capped": wrong})
+        return APPROVED, "bypassPermissions"
+    g = grade(case, repo, out)
+    rec = {"kind": "pr", "t": t, "verdict": "approve" if g["hidden_pass"] else "request_changes",
+           "hidden_pass": g["hidden_pass"], "hidden_tail": g["hidden_tail"], "graded_ref": g["graded_ref"],
+           "pr_opened": g["pr_opened"]}
+    if not g["hidden_pass"] and corrections < reviewer.MAX_CORRECTIONS:
+        checkpoints.append({**rec, "correction": True})
+        return case["review"]["correction"] + FIX_ON_BRANCH, "bypassPermissions"
+    checkpoints.append({**rec, "correction": False, "capped": not g["hidden_pass"]})
+    return None, None
+
+
+def partner_checkpoints(out: Path) -> list:
+    """Odin's checkpoints, from the reviewing partner's log."""
+    rows = []
+    log = out / "partner.log"
+    for line in (log.read_text().splitlines() if log.exists() else []):
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        rev = r.get("review") or {}
+        kind = {"huginn-plan": "plan", "heimdall-validation": "pr"}.get(r.get("phase"))
+        if kind:
+            rows.append({"kind": kind, "t_clock": r.get("t"), "decision": r.get("decision"), **rev})
+    return rows
 
 
 def run_trial(case: dict, mode: str, rep: int, args, run_dir: Path, resume: dict | None = None) -> tuple:
@@ -427,6 +509,8 @@ def run_trial(case: dict, mode: str, rep: int, args, run_dir: Path, resume: dict
             pcmd += ["--script", json.dumps(script)]
         if case.get("partner_notes"):
             pcmd += ["--notes", case["partner_notes"]]
+        if case.get("review"):
+            pcmd += ["--review-case", case["id"]]
         partner = subprocess.Popen(pcmd, stdout=subprocess.DEVNULL, stderr=open(out / "partner.err", "w"))
 
     transcript = out / "transcript.jsonl"
@@ -441,7 +525,18 @@ def run_trial(case: dict, mode: str, rep: int, args, run_dir: Path, resume: dict
         cmd = resume_cmd(build_cmd(case, mode, args), sid, NUDGE)
     else:
         transcript.write_text("")
-    while True:
+    checkpoints: list = []
+    reviewed = bool(case.get("review")) and mode in ("plain", "planmode") and not resume
+    while reviewed:
+        status, rc = drive(cmd, repo, env, out, transcript, started, args)
+        if status != "completed":
+            break
+        sid = session_id(read_events(transcript))
+        msg, permission = review_turn(case, mode, repo, out, transcript, checkpoints, started)
+        if msg is None or not sid:
+            break
+        cmd = resume_cmd(build_cmd(case, mode, args), sid, msg, permission)
+    while not reviewed:
         status, rc = drive(cmd, repo, env, out, transcript, started, args)
         if status != "completed" or len(nudges) >= MAX_NUDGES:
             break
@@ -458,6 +553,9 @@ def run_trial(case: dict, mode: str, rep: int, args, run_dir: Path, resume: dict
     wall = round(prior_wall + time.time() - started, 1)
 
     events = read_events(transcript)
+    remove_plan_files(events)
+    if mode == "gated" and case.get("review"):
+        checkpoints = partner_checkpoints(out)
     results = [e for e in events if e.get("type") == "result"]
     result_event = results[-1] if results else {}
     t = totals(results)
@@ -472,6 +570,7 @@ def run_trial(case: dict, mode: str, rep: int, args, run_dir: Path, resume: dict
         "invocations": 1 + len(nudges),
         "turn_ends": len(results),
         "nudges": nudges,
+        "checkpoints": checkpoints,
         "result_subtype": result_event.get("subtype"),
         "tokens": {k: usage.get(k) for k in ("input_tokens", "output_tokens",
                                               "cache_read_input_tokens", "cache_creation_input_tokens")},
@@ -498,7 +597,7 @@ def run_trial(case: dict, mode: str, rep: int, args, run_dir: Path, resume: dict
     row["phases"] = final_phases(out)
     row.update(loop_status(mode, row["phases"], out))
     row["opened_pr"] = opened_pr(out)
-    if mode == "plain":  # Odin's own rules don't apply to plain Claude Code
+    if mode in ("plain", "planmode"):  # Odin's own rules don't apply to plain Claude Code
         row["protocol"] = {"violations": [], "pass": None, "checks": {}}
         return "result", row
     try:
@@ -551,7 +650,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cases", default="all", help="comma-separated case ids, or 'all'")
     ap.add_argument("--reps", type=int, default=1)
-    ap.add_argument("--mode", choices=["case", "waiver", "gated", "plain"], default="case",
+    ap.add_argument("--mode", choices=["case", "waiver", "gated", "plain", "planmode"], default="case",
                     help="'case' uses each case's own mode; 'plain' is Claude Code with no plugins")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--odin-dir", default=str(REPO_ROOT))

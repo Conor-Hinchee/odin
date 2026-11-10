@@ -1,0 +1,25 @@
+{
+  "id": "report-timezone",
+  "tags": [
+    "trap",
+    "clue-in-repo"
+  ],
+  "mode": "gated",
+  "prompt": "Add a `todays_report(orders, now=None)` to shop/report.py that summarizes today's orders, with `now` overridable for tests.",
+  "hidden_test_cmd": "PYTHONPATH=. python3 -m unittest discover -s _hidden",
+  "visible_test_cmd": "python3 -m unittest discover tests",
+  "allowed_paths": [
+    "shop/*",
+    "tests/*",
+    "README.md"
+  ],
+  "expect": {
+    "pause_at_plan": true,
+    "parallel_ok": false
+  },
+  "budget_usd": 3,
+  "review": {
+    "intent": "\"Today\" is the store's calendar day in the store's timezone (STORE_TZ in shop/config.py), not the UTC date. Both now and each order's created_at must be converted to STORE_TZ before comparing dates. An evening order in Los Angeles is already 'tomorrow' in UTC.",
+    "correction": "\"Today\" should be the store's day, not the UTC date: use STORE_TZ from shop/config.py, and convert both now and each order's created_at to it before comparing dates."
+  }
+}
