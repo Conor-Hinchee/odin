@@ -78,7 +78,7 @@ Optional settings (repos, ports, telemetry, skill pills, PR telemetry, staging) 
 
 ### Reactive wakeup bridge (`wait-for-human`)
 
-Whenever you pause at `awaiting_human` (phase 1 plan review, the phase 3 pre-PR gate, or phase 5 sign-off), start the watcher in the background (`Bash` with `run_in_background: true` in Claude Code, or `run_command` with `WaitMsBeforeAsync: 500` in Antigravity):
+Whenever you pause at `awaiting_human` (phase 1 plan review, the phase 3 pre-PR gate, or phase 5 sign-off), start the watcher **once**, as its own background command (`Bash` with `run_in_background: true` in Claude Code, or `run_command` with `WaitMsBeforeAsync: 500` in Antigravity). Never start it with `nohup`, a trailing `&` or redirected output, or chained onto another command: only a background command's exit wakes you, so a detached copy can swallow the human's decision and leave the session hung. (A watcher writing to `/dev/null` refuses to start, and a newer watcher for the same task stops the older one.)
 
 ```bash
 python3 "$ODIN/odin-state.py" wait-for-human \

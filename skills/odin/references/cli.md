@@ -9,7 +9,7 @@ All commands are `python3 "${CLAUDE_SKILL_DIR}/scripts/odin-state.py" <command> 
 | `log` | Append an entry to a phase's timeline. No status change, no notification. Consecutive duplicates are skipped | `--kind {step,phase,commit,test,finding,decision,plan-change,valkyrie,incident,env}`, `--text` (required), `--detail`, `--outcome {pass,fail}`, `--phase` (defaults to the furthest active/awaiting phase), `--at <ISO time>` to record an event after the fact |
 | `set-env` | Restamp `data-branch`/`data-worktree`/`data-*-port` and the header env bar, and log the change | `--branch`, `--worktree`, `--app-port`, `--backend-port`, `--reason` |
 | `step-back` | Start iteration N+1 after a rejection or follow-up; earlier cards are kept | `--reason` (required), `--root-cause`, `--source {human,ci,heimdall}` |
-| `wait-for-human` | Block until the human acts in the dashboard, then print the wakeup JSON and exit | `--phase`, `--session-id`, `--timeout`, `--consume-existing` |
+| `wait-for-human` | Block until the human acts in the dashboard, then print the wakeup JSON and exit. One per task: a newer watcher stops the older one; refuses to start if stdout is `/dev/null` | `--phase`, `--session-id`, `--timeout`, `--consume-existing` |
 | `propose-delta` | Record a phase 4 harness delta proposal | `--id` (required), `--category`, `--target-path`, `--failure-pattern`, `--proposed-diff`, `--priority {p0,p1,p2}` |
 | `mimir-audit` | Summarize delta proposals across every state file under a root | `--dir`, `--format {markdown,json}` |
 | `spawn-delta-ticket` | Turn a delta proposal into its own Odin state file | `--id` (required), `--dir` |

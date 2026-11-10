@@ -166,6 +166,57 @@ class TestOdin(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertFalse(wakeup_file.exists(), "Wakeup file should be consumed and unlinked")
 
+    def _watcher_cmd(self, timeout="30"):
+        import sys
+        return [sys.executable, str(STATE_SCRIPT), "wait-for-human", "--file", str(self.sample_html_path),
+                "--phase", "huginn-plan", "--timeout", timeout, "--poll-interval", "0.05"]
+
+    def _wait_for(self, predicate, timeout=10.0):
+        import time
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if predicate():
+                return True
+            time.sleep(0.05)
+        return False
+
+    def test_wait_for_human_refuses_devnull_stdout(self):
+        import subprocess
+        proc = subprocess.run(self._watcher_cmd(timeout="5"), stdout=subprocess.DEVNULL,
+                              stderr=subprocess.PIPE, text=True, timeout=10)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("/dev/null", proc.stderr)
+        self.assertFalse((self.states_dir / ".odin-watcher-sample-v3-feature.json").exists())
+
+    def test_wait_for_human_newer_watcher_replaces_older(self):
+        import subprocess
+        watcher_file = self.states_dir / ".odin-watcher-sample-v3-feature.json"
+        old = subprocess.Popen(self._watcher_cmd(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        new = None
+        try:
+            self.assertTrue(self._wait_for(watcher_file.exists), "first watcher never armed")
+            new = subprocess.Popen(self._watcher_cmd(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            old_out, _ = old.communicate(timeout=10)
+            self.assertIn("watcher stopped", old_out)
+            self.assertNotIn("WAKEUP EVENT", old_out)
+
+            def armed_by_new():
+                try:
+                    return json.loads(watcher_file.read_text()).get("pid") == new.pid
+                except (OSError, ValueError):
+                    return False
+
+            self.assertTrue(self._wait_for(armed_by_new), "second watcher never took over")
+            self.odin_state.write_wakeup_event(self.sample_html_path, decision="approve_huginn", phase="huginn-plan")
+            new_out, new_err = new.communicate(timeout=10)
+            self.assertEqual(new.returncode, 0)
+            self.assertIn('"decision": "approve_huginn"', new_out)
+            self.assertIn(f"pid {old.pid}", new_err)
+        finally:
+            for p in (old, new):
+                if p and p.poll() is None:
+                    p.kill()
+
     def test_pause_and_resume_watcher_state(self):
         p1 = self.odin_state.set_pause_state(True, reason="Unit test pause", states_dir=self.states_dir)
         self.assertTrue(p1["paused"])

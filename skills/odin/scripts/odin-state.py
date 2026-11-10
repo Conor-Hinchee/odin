@@ -5385,6 +5385,58 @@ def set_pause_state(paused: bool, reason: str = "", states_dir: str | Path | Non
     return data
 
 
+def _stdout_is_devnull() -> bool:
+    """True when this process's stdout goes to /dev/null, so a wakeup it prints is lost."""
+    try:
+        out = os.fstat(sys.stdout.fileno())
+        null = os.stat(os.devnull)
+    except (AttributeError, OSError, ValueError):
+        return False
+    return (out.st_dev, out.st_ino) == (null.st_dev, null.st_ino)
+
+
+def _pid_is_wait_for_human(pid: int) -> bool:
+    if not isinstance(pid, int) or pid <= 0 or pid == os.getpid():
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    try:
+        cmdline = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True, timeout=5
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "wait-for-human" in cmdline
+
+
+def _replace_existing_watcher(watcher_file: Path, wait_sec: float = 3.0) -> int | None:
+    """Stop an older watcher for the same task so only one can consume the wakeup.
+
+    Two watchers on one task race for a single wakeup file. If the one whose output
+    nobody reads wins, the session never resumes. The newest watcher takes over.
+    """
+    try:
+        old_pid = json.loads(watcher_file.read_text(encoding="utf-8")).get("pid")
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not _pid_is_wait_for_human(old_pid):
+        return None
+    try:
+        os.kill(old_pid, signal.SIGTERM)
+    except OSError:
+        return None
+    deadline = time.time() + wait_sec
+    while time.time() < deadline:
+        try:
+            os.kill(old_pid, 0)
+        except OSError:
+            break
+        time.sleep(0.05)
+    return old_pid
+
+
 def cmd_wait_for_human(args: argparse.Namespace) -> int:
     try:
         html_path = _resolve_html_path(args)
@@ -5394,11 +5446,23 @@ def cmd_wait_for_human(args: argparse.Namespace) -> int:
     if not html_path.exists():
         print(f"Error: File not found: {html_path}", file=sys.stderr)
         return 1
+    if _stdout_is_devnull():
+        print(
+            "Error: wait-for-human's stdout goes to /dev/null, so the human's decision would be "
+            "lost and the session would never resume. Run it once, as a background command "
+            "(run_in_background / WaitMsBeforeAsync), without nohup, & or output redirection.",
+            file=sys.stderr,
+        )
+        return 2
 
     slug = html_path.stem
     states_dir = _get_odin_states_dir_for_html(html_path)
     wakeup_file = states_dir / f".odin-wakeup-{slug}.json"
     watcher_file = states_dir / f".odin-watcher-{slug}.json"
+
+    replaced = _replace_existing_watcher(watcher_file)
+    if replaced:
+        print(f"Note: replaced an older wait-for-human watcher (pid {replaced}) for {slug}.", file=sys.stderr)
 
     # Clear any stale wakeup event from before this wait started unless --consume-existing is passed
     if wakeup_file.exists() and not getattr(args, "consume_existing", False):
@@ -5435,7 +5499,16 @@ def cmd_wait_for_human(args: argparse.Namespace) -> int:
         except OSError:
             pass
 
-    signal.signal(signal.SIGTERM, lambda s, f: (cleanup_heartbeat(), sys.exit(0)))
+    def on_sigterm(*_sig) -> None:
+        cleanup_heartbeat()
+        print(
+            "\n=== Odin watcher stopped (replaced by a newer watcher, or killed). "
+            "No human decision was received by this watcher. ===",
+            flush=True,
+        )
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, on_sigterm)
     signal.signal(signal.SIGINT, lambda s, f: (cleanup_heartbeat(), sys.exit(0)))
 
     write_heartbeat("armed")
