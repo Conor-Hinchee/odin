@@ -1,6 +1,6 @@
 # Odin evals
 
-Runs fixed dev tasks through Odin in headless Claude Code and grades what each run leaves behind. Plan and rationale: [PLAN.md](PLAN.md). What the first runs taught us: [SPIKE.md](SPIKE.md).
+Runs fixed dev tasks through Odin in headless Claude Code and grades what each run leaves behind. **Results and what they found: [WRITEUP.md](WRITEUP.md).** Plan and rationale: [PLAN.md](PLAN.md). What the first runs taught us: [SPIKE.md](SPIKE.md).
 
 ## Run
 

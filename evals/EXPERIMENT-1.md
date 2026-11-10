@@ -189,9 +189,11 @@ H5's main cause is fixed in Odin, and a re-run confirms it.
 
 | H5 on these three cases | run 2 Odin | re-run Odin | run 2 plain |
 |---|---|---|---|
-| Opened a PR with a `## Summary` | – | 9/9 | – |
-| Judge: PR description matches the diff | 0/5 (4 n/a: the body was only the Prompt Summary) | **8/9** (CI 56–98%) | 9/9 |
+| Opened a PR | 5/9 | 9/9 | 9/9 |
+| …whose body starts with a `## Summary` | 0/5 | 9/9 | – |
+| Judge: PR description matches the diff | 0/5 (3 were only the Prompt Summary, failed by rule) | **8/9** (CI 56–98%) | 9/9 |
 
+  - Run 2's 4 trials without a PR are n/a, not fails; that's the sandbox's `file://` push giving itself away (see the limitation above). Every re-run trial opened one, but with n = 9 that may be noise, not the new rule.
   - Against run 2 Odin on these cases, Fisher p = 0.003. Against plain, p = 1.0: **no difference detected**, at n = 9.
   - The one fail is real: `feature-parallel/r2`'s Summary says "No files or public APIs deleted", but the diff renames the public `DEFAULT_RATE` to `DEFAULT_RATE_BP`. The rule asks for every deletion, and the agent missed a rename.
   - The judge is still uncalibrated (the hand labels are pending), so read 8/9 against plain's 9/9 under the same judge, not as an absolute rate.
