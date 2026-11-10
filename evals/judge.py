@@ -228,8 +228,13 @@ def pr_description(trial: Path) -> tuple:
             continue
         create = e.startswith("pr create")
         opened = opened or create
+        bf = re.search(r"--body-file[ =](\S+)", e)
         m = re.match(r"pr (?:create|edit)\b.*?--body[ =]([\s\S]*)", e)
-        if m:
+        if bf:  # the fake gh keeps a copy in <trial>/gh-bodies/; the original may be gone
+            src = Path(bf.group(1))
+            copy = trial / "gh-bodies" / src.name
+            body = (copy.read_text() if copy.exists() else src.read_text() if src.exists() else "").strip()
+        elif m:
             body = re.split(r" --(?:title|base|head|fill)\b", m.group(1))[0].strip()
         elif create and re.search(r"\s--fill\b", e) and not body and (trial / "repo").is_dir():
             hm = re.search(r"--head[ =](\S+)", e)

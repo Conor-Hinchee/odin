@@ -119,6 +119,10 @@ class FakeGhTest(unittest.TestCase):
         self.assertEqual(sh("gh", "pr", "create", "--fill").returncode, 1)  # already exists
         sh("git", "checkout", "-q", "main")
         self.assertEqual(sh("gh", "pr", "view").returncode, 1)  # per branch
+        (d / "b.md").write_text("## Summary\n- x")
+        sh("git", "checkout", "-q", "feat/x")
+        sh("gh", "pr", "edit", "1", "--body-file", str(d / "b.md"))
+        self.assertTrue((d / "gh-bodies" / "b.md").exists())
 
 
 class IsolationTest(unittest.TestCase):

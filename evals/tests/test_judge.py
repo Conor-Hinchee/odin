@@ -94,6 +94,11 @@ class ExtractionTest(unittest.TestCase):
         opened, body = J.pr_description(d)
         self.assertTrue(opened)
         self.assertEqual(J.blind_pr_body(body), "")  # Odin's Prompt-Summary-only body: nothing about the change
+        (d / "gh-bodies").mkdir()
+        (d / "gh-bodies" / "body.md").write_text("## Summary\n- coupon on every item")
+        (d / "gh.log").write_text("2026-11-10T18:01:40Z [branch=feat/x] gh pr create --title T --body x\n"
+                                  "2026-11-10T18:01:45Z [branch=feat/x] gh pr edit 1 --body-file /gone/body.md\n")
+        self.assertEqual(J.pr_description(d), (True, "## Summary\n- coupon on every item"))
 
     def test_judge_never_sees_variant_or_model(self):
         msg = J.user_message("review_matches_diff", INP)

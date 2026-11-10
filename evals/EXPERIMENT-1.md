@@ -179,3 +179,20 @@ The nudge rate is the finding to watch. In smoke-4, 1 of 6 trials stalled; here 
 ### What this says
 
 On small, well-specified tasks, plain Claude Code gets the same correct result at a quarter of the cost and time. These tasks don't show what Odin's overhead buys. What it did buy was visible process: plans with open questions (the `legacy_total` risk flagged in 2/3 trials), a durable record of each review, and a worktree for a dirty checkout. None of that moved the outcome metrics on tasks this size. The most actionable finding is about Odin itself: **its dashboard approvals aren't trusted 39% of the time.** That's a cost in human attention the outcome metrics don't show, and a real user would hit it. The second actionable finding: **Odin's PR descriptions describe the change less well than plain's** (5/10 vs. 17/17), because its PR-body rule asks for a prompt summary and not a change summary. The likely fix is in how the approval reaches the agent, for example by having the agent verify the decision the dashboard recorded in the state file. It is not to tell the agent to ignore Claude Code's notice.
+
+## Follow-up: the PR-body rule (after run 2)
+
+H5's main cause is fixed in Odin, and a re-run confirms it.
+- **SKILL.md:** the PR body must start with a `## Summary` of what changed and why: every behaviour change (including defaults chosen for open questions), every deletion, and the tests added, reusing the pre-PR review's rationale and file notes. The `### Prompt Summary` comes after it, and a body that is only the Prompt Summary is incomplete.
+- **PR hook** (when the user's config has a `pr` block): `gh pr create` is denied if the body says nothing beyond the Prompt Summary, telemetry and attribution. `"require_change_summary": false` turns this off. The eval sandboxes have no `pr` block, so a re-run measures the SKILL.md rule alone, which is the harder test.
+- **Re-run (`exp1c-odin-prbody`, $2.70 trials + $0.21 judge):** the Odin arm on the three cases with H5 fails (`destructive-delete`, `feature-parallel`, `feature-serial`), 3 reps each, using the uncommitted SKILL.md rule on top of `2d4f77d`. Same model, cases, grader, judge and rubric version as run 2.
+
+| H5 on these three cases | run 2 Odin | re-run Odin | run 2 plain |
+|---|---|---|---|
+| Opened a PR with a `## Summary` | – | 9/9 | – |
+| Judge: PR description matches the diff | 0/5 (4 n/a: the body was only the Prompt Summary) | **8/9** (CI 56–98%) | 9/9 |
+
+  - Against run 2 Odin on these cases, Fisher p = 0.003. Against plain, p = 1.0: **no difference detected**, at n = 9.
+  - The one fail is real: `feature-parallel/r2`'s Summary says "No files or public APIs deleted", but the diff renames the public `DEFAULT_RATE` to `DEFAULT_RATE_BP`. The rule asks for every deletion, and the agent missed a rename.
+  - The judge is still uncalibrated (the hand labels are pending), so read 8/9 against plain's 9/9 under the same judge, not as an absolute rate.
+- **Eval gap found on the way:** 3 of the 9 agents wrote the body to a file and passed `--body-file`. The fake `gh` logged only the path, so the judge would have seen an empty body. The fake `gh` now copies the file into the trial's `gh-bodies/`, and `judge.pr_description` reads it (tests in `FakeGhTest` and `test_judge`). The three files still existed and were copied in by hand. No run 2 trial used `--body-file`, so run 2 is unaffected.

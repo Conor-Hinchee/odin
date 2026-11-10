@@ -8,6 +8,14 @@ created() { [ -f "$LOG" ] && grep -q "\[branch=$BRANCH\] gh pr create" "$LOG"; }
 had_pr=1
 created && had_pr=0
 echo "$(date -u +%FT%TZ) [branch=$BRANCH] gh $*" >> "$LOG"
+# Keep a copy of any --body-file: agents write it to temp dirs that don't outlive the trial.
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--body-file" ] && [ -f "$a" ] && [ "$LOG" != "/dev/null" ]; then
+    mkdir -p "$(dirname "$LOG")/gh-bodies" && cp "$a" "$(dirname "$LOG")/gh-bodies/"
+  fi
+  prev="$a"
+done
 case "$1 $2" in
   "pr create")
     if [ $had_pr -eq 0 ]; then
