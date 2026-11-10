@@ -95,7 +95,17 @@ def extract_ledger(content: str, file_path: str = "") -> dict:
     )
     if match:
         try:
-            return json.loads(match.group(1).strip())
+            parsed_ledger = json.loads(match.group(1).strip())
+            if isinstance(parsed_ledger, dict):
+                if not parsed_ledger.get("session_id"):
+                    body_sid_m = re.search(
+                        r'<body\b[^>]*\bdata-session-id=["\']([^"\']+)["\']',
+                        content,
+                        re.IGNORECASE,
+                    )
+                    if body_sid_m and body_sid_m.group(1).strip():
+                        parsed_ledger["session_id"] = body_sid_m.group(1).strip()
+                return parsed_ledger
         except Exception:
             pass
 
@@ -104,6 +114,10 @@ def extract_ledger(content: str, file_path: str = "") -> dict:
     title = html_mod.unescape(re.sub(r"<[^>]+>", "", title_m.group(1)).strip()) if title_m else slug
     sess_m = re.search(
         r'<meta\s+name=["\']odin-session-id["\']\s+content=["\']([^"\']+)["\']',
+        content,
+        re.IGNORECASE,
+    ) or re.search(
+        r'<body\b[^>]*\bdata-session-id=["\']([^"\']+)["\']',
         content,
         re.IGNORECASE,
     )
@@ -219,6 +233,15 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
           }
           nodesToMove.forEach((n) => body.appendChild(n));
           sec.appendChild(body);
+        } else {
+          let curr = body.nextSibling;
+          while (curr) {
+            const next = curr.nextSibling;
+            if (!(curr.nodeType === 1 && curr.hasAttribute("data-odin-transient"))) {
+              body.appendChild(curr);
+            }
+            curr = next;
+          }
         }
         return body;
       }
@@ -307,6 +330,40 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
             cb.removeAttribute("checked");
           }
         });
+      }
+
+      function appendPromptSummaryRow(listEl, initialValue = "") {
+        if (!listEl) return null;
+        const row = document.createElement("div");
+        row.setAttribute("data-odin-prompt-summary-row", "true");
+        row.style.cssText = "display:flex;align-items:center;gap:0.5rem;";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = true;
+        cb.setAttribute("checked", "checked");
+        cb.setAttribute("data-odin-prompt-summary-check", "true");
+        cb.style.cssText = "accent-color:var(--emerald, #34d399);cursor:pointer;width:16px;height:16px;";
+        const inp = document.createElement("input");
+        inp.type = "text";
+        inp.value = initialValue || "";
+        inp.placeholder = "Concise 1-line summary bullet for ### Prompt Summary...";
+        inp.setAttribute("data-odin-prompt-summary-text", "true");
+        inp.style.cssText =
+          "flex:1;min-width:220px;background:var(--surface, #0f172a);color:var(--text, #f8fafc);border:1px solid rgba(148,163,184,0.38);border-radius:8px;padding:0.4rem 0.7rem;font-size:0.82rem;";
+        const rmBtn = document.createElement("button");
+        rmBtn.type = "button";
+        rmBtn.className = "btn";
+        rmBtn.setAttribute("data-odin-summary-action", "remove-item");
+        rmBtn.title = "Remove bullet";
+        rmBtn.style.cssText =
+          "padding:0.28rem 0.55rem;font-size:0.76rem;color:var(--crimson, #fb7185);border-color:rgba(244,63,94,0.4);";
+        rmBtn.textContent = "✕";
+        row.appendChild(cb);
+        row.appendChild(inp);
+        row.appendChild(rmBtn);
+        listEl.appendChild(row);
+        inp.focus();
+        return inp;
       }
 
       // Ensure phase-body wrapper and header co-edit button exist at startup
@@ -594,6 +651,16 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
         if (deltaBtn) {
           const deltaId = deltaBtn.getAttribute("data-delta-id");
           const status = deltaBtn.getAttribute("data-odin-delta-btn") || "applied";
+          const deltaItem = deltaBtn.closest(".odin-top-delta-item");
+          if (
+            status === "dismissed" &&
+            deltaItem &&
+            (deltaItem.getAttribute("data-status") === "in_progress" ||
+              deltaItem.getAttribute("data-has-ticket") === "true" ||
+              Boolean(deltaItem.querySelector('a[href*="mimir-delta"]')))
+          ) {
+            if (!confirm(`Dismiss delta "${deltaId}"? A spawned delta ticket is already in progress.`)) return;
+          }
           deltaBtn.disabled = true;
           try {
             const res = await fetch(`${API_BASE}/api/mimir/apply`, {
@@ -621,6 +688,29 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
             setTimeout(() => { copyBtn.textContent = orig; }, 1800);
           }
           return;
+        }
+
+        const summaryActionBtn = e.target.closest("[data-odin-summary-action]");
+        if (summaryActionBtn) {
+          const sAct = summaryActionBtn.getAttribute("data-odin-summary-action");
+          const curator =
+            summaryActionBtn.closest("[data-odin-prompt-summary-curator]") ||
+            document.querySelector("[data-odin-prompt-summary-curator]");
+          const listEl = curator?.querySelector("[data-odin-prompt-summary-list]");
+          if (sAct === "add-item") {
+            appendPromptSummaryRow(listEl, "");
+            return;
+          }
+          if (sAct === "remove-item") {
+            const row = summaryActionBtn.closest("[data-odin-prompt-summary-row]");
+            if (row) row.remove();
+            return;
+          }
+          if (sAct === "use-raw-prompt") {
+            const seed = summaryActionBtn.getAttribute("data-prompt-summary-seed") || "";
+            appendPromptSummaryRow(listEl, seed);
+            return;
+          }
         }
 
         const topActionBtn = e.target.closest("[data-odin-top-action]");
@@ -751,7 +841,16 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
             const reviewBlock = typeof window.__odinBuildReviewCommentsSummary === "function"
               ? window.__odinBuildReviewCommentsSummary()
               : "";
-            const combinedNote = [rawNote, reviewBlock].filter(Boolean).join("\\n\\n");
+            const approvedPromptSummary = Array.from(
+              document.querySelectorAll("#odin-heimdall-gate-banner [data-odin-prompt-summary-row]")
+            )
+              .filter((row) => row.querySelector("[data-odin-prompt-summary-check]")?.checked)
+              .map((row) => (row.querySelector("[data-odin-prompt-summary-text]")?.value || "").trim())
+              .filter(Boolean);
+            const summaryBlock = approvedPromptSummary.length
+              ? "### Prompt Summary\\n" + approvedPromptSummary.map((item, idx) => `${idx + 1}. ${item}`).join("\\n")
+              : "";
+            const combinedNote = [rawNote, reviewBlock, summaryBlock].filter(Boolean).join("\\n\\n");
             const selectedSkills = getSelectedSkills("#odin-heimdall-gate-banner");
             try {
               const res = await fetch(`${API_BASE}/api/projects/action`, {
@@ -762,7 +861,8 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
                   id: relId,
                   decision: "approve_pr",
                   humanNote: combinedNote || "Approved Heimdall Pre-PR Code Review Gate in Odin.",
-                  selectedSkills
+                  selectedSkills,
+                  approvedPromptSummary
                 })
               });
               const data = await res.json();
@@ -885,10 +985,20 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
         window.__odinStickyDiffReviewV2 = true;
         const REVIEW_STORAGE_KEY = `odin_diff_review_${relId}`;
         const APPROVED_STORAGE_KEY = `odin_diff_approved_${relId}`;
+        const UNIFIED_LINE_THRESHOLD = 100;
 
         const syncStickyHeaderOffset = () => {
           const topBar = document.querySelector(".odin-topbar, .odin-header");
-          const h = topBar ? Math.ceil(topBar.getBoundingClientRect().height) : 0;
+          let h = 0;
+          if (topBar) {
+            const pos = window.getComputedStyle(topBar).position;
+            if (pos === "sticky" || pos === "fixed") {
+              const rect = topBar.getBoundingClientRect();
+              if (rect.bottom > 0 && rect.top <= 4) {
+                h = Math.ceil(rect.height);
+              }
+            }
+          }
           document.documentElement.style.setProperty("--odin-sticky-top-offset", `${Math.max(0, h)}px`);
           return h;
         };
@@ -902,9 +1012,82 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
               return;
             }
             const sRect = sum.getBoundingClientRect();
+            const sumHeight = Math.max(36, Math.round(sRect.height));
+            card.style.setProperty("--odin-file-summary-height", `${sumHeight}px`);
             const cRect = card.getBoundingClientRect();
             const isStuck = Math.abs(sRect.top - offset) <= 3 && cRect.top < offset - 4 && cRect.bottom > sRect.bottom + 16;
             sum.classList.toggle("is-stuck", isStuck);
+          });
+        };
+
+        const updateFileModeButtonLabel = (card) => {
+          const btn = card.querySelector("[data-odin-toggle-file-mode]");
+          if (!btn) return;
+          const mode = card.getAttribute("data-view-mode") || "split";
+          const defaultMode = card.getAttribute("data-default-view-mode") || "split";
+          const changed = parseInt(card.getAttribute("data-changed-lines") || "0", 10) || 0;
+          btn.setAttribute("data-view-mode", mode);
+          if (mode === "unified") {
+            btn.textContent = defaultMode === "unified" ? `☰ Unified (${changed} lines)` : "☰ Unified";
+          } else {
+            btn.textContent = "◫ Split";
+          }
+        };
+
+        const syncToolbarActiveModeBtn = (viewer) => {
+          if (!viewer) return;
+          const vMode = viewer.getAttribute("data-view-mode") || "auto";
+          viewer.querySelectorAll("[data-mode-btn]").forEach((b) => {
+            b.classList.toggle("active", b.dataset.modeBtn === vMode);
+          });
+        };
+
+        const syncPerFileDiffViewModes = () => {
+          document.querySelectorAll(".odin-diff-viewer").forEach((viewer) => {
+            const modeGroup = viewer.querySelector(".odin-diff-mode-group");
+            if (modeGroup && !modeGroup.querySelector('[data-mode-btn="auto"]')) {
+              const autoBtn = document.createElement("button");
+              autoBtn.type = "button";
+              autoBtn.className = "odin-diff-btn";
+              autoBtn.setAttribute("data-mode-btn", "auto");
+              autoBtn.textContent = "⚡ Auto (100+ Lines → Unified)";
+              modeGroup.insertBefore(autoBtn, modeGroup.firstChild);
+            }
+            if (!viewer.hasAttribute("data-odin-modes-initialized")) {
+              viewer.setAttribute("data-odin-modes-initialized", "true");
+              viewer.setAttribute("data-view-mode", "auto");
+            }
+            viewer.querySelectorAll("details.odin-diff-file-card").forEach((card) => {
+              let changed = parseInt(card.getAttribute("data-changed-lines") || "-1", 10);
+              if (changed < 0 || Number.isNaN(changed)) {
+                const addEl = card.querySelector(":scope > summary .odin-diff-stat-add");
+                const delEl = card.querySelector(":scope > summary .odin-diff-stat-del");
+                const adds = parseInt((addEl?.textContent || "").replace(/[^0-9]/g, ""), 10) || 0;
+                const dels = parseInt((delEl?.textContent || "").replace(/[^0-9]/g, ""), 10) || 0;
+                changed = adds + dels;
+                card.setAttribute("data-changed-lines", String(changed));
+              }
+              const defaultMode = changed >= UNIFIED_LINE_THRESHOLD ? "unified" : "split";
+              if (!card.hasAttribute("data-default-view-mode")) {
+                card.setAttribute("data-default-view-mode", defaultMode);
+              }
+              if (!card.hasAttribute("data-view-mode")) {
+                card.setAttribute("data-view-mode", defaultMode);
+              }
+              const sumInner = card.querySelector(":scope > summary .odin-diff-file-summary-inner");
+              if (sumInner && !sumInner.querySelector("[data-odin-toggle-file-mode]")) {
+                const metaGroups = sumInner.querySelectorAll(".odin-diff-file-meta");
+                const actionGroup = metaGroups[metaGroups.length - 1] || sumInner;
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.className = "odin-diff-action-btn odin-diff-file-mode-btn";
+                btn.setAttribute("data-odin-toggle-file-mode", card.getAttribute("data-file-path") || "");
+                btn.title = `Toggle Side-by-Side (Split) vs. Unified view for this file (${changed} changed lines)`;
+                actionGroup.insertBefore(btn, actionGroup.firstChild);
+              }
+              updateFileModeButtonLabel(card);
+            });
+            syncToolbarActiveModeBtn(viewer);
           });
         };
 
@@ -922,7 +1105,7 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
           if (!sum) return fallback;
           const sumBottom = sum.getBoundingClientRect().bottom;
           const viewer = card.closest(".odin-diff-viewer");
-          const mode = viewer?.getAttribute("data-view-mode") || "split";
+          const mode = card.getAttribute("data-view-mode") || viewer?.getAttribute("data-view-mode") || "split";
           const tblSelector = mode === "unified" ? "table.odin-diff-unified-table" : "table.odin-diff-split-table";
           const rows = card.querySelectorAll(`${tblSelector} tr.odin-diff-row`);
           for (const r of rows) {
@@ -1147,33 +1330,35 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
                 }
               });
 
-              const anchorRow =
-                card.querySelector(`tr.odin-diff-row[data-line="${CSS.escape(String(endLine))}"]`) ||
-                card.querySelector(`tr.odin-diff-row[data-line="${CSS.escape(String(startLine))}"]`);
+              card.querySelectorAll("table.odin-diff-split-table, table.odin-diff-unified-table").forEach((tbl) => {
+                const anchorRow =
+                  tbl.querySelector(`tr.odin-diff-row[data-line="${CSS.escape(String(endLine))}"]`) ||
+                  tbl.querySelector(`tr.odin-diff-row[data-line="${CSS.escape(String(startLine))}"]`);
 
-              if (anchorRow) {
-                const colSpan = anchorRow.children.length || 4;
-                const tr = document.createElement("tr");
-                tr.className = "odin-diff-saved-comment-row";
-                tr.setAttribute("data-odin-transient", "true");
-                tr.setAttribute("data-comment-id", item.id);
-                const lineLabel = startLine === endLine ? String(startLine) : `${startLine}-${endLine}`;
-                tr.innerHTML = `<td colspan="${colSpan}">
-                  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;">
-                    <div>
-                      <div style="font-size:0.75rem;font-weight:800;color:#c084fc;margin-bottom:0.2rem;">
-                        💬 Code Review Comment on <code>${escapeHtml(item.repo ? item.repo + "/" + item.filePath : item.filePath)}:${escapeHtml(lineLabel)}</code>
+                if (anchorRow) {
+                  const colSpan = anchorRow.children.length || 4;
+                  const tr = document.createElement("tr");
+                  tr.className = "odin-diff-saved-comment-row";
+                  tr.setAttribute("data-odin-transient", "true");
+                  tr.setAttribute("data-comment-id", item.id);
+                  const lineLabel = startLine === endLine ? String(startLine) : `${startLine}-${endLine}`;
+                  tr.innerHTML = `<td colspan="${colSpan}">
+                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;">
+                      <div>
+                        <div style="font-size:0.75rem;font-weight:800;color:#c084fc;margin-bottom:0.2rem;">
+                          💬 Code Review Comment on <code>${escapeHtml(item.repo ? item.repo + "/" + item.filePath : item.filePath)}:${escapeHtml(lineLabel)}</code>
+                        </div>
+                        <div style="font-size:0.84rem;color:#f8fafc;white-space:pre-wrap;line-height:1.45;">${escapeHtml(item.comment)}</div>
                       </div>
-                      <div style="font-size:0.84rem;color:#f8fafc;white-space:pre-wrap;line-height:1.45;">${escapeHtml(item.comment)}</div>
+                      <div style="display:flex;gap:0.4rem;">
+                        <button type="button" class="odin-diff-action-btn odin-diff-comment-btn" data-odin-edit-comment="${escapeHtml(item.id)}">✏️ Edit</button>
+                        <button type="button" class="odin-diff-action-btn" style="color:#fb7185;border:1px solid rgba(244,63,94,0.45);background:rgba(244,63,94,0.14);" data-odin-delete-comment="${escapeHtml(item.id)}">🗑️ Remove</button>
+                      </div>
                     </div>
-                    <div style="display:flex;gap:0.4rem;">
-                      <button type="button" class="odin-diff-action-btn odin-diff-comment-btn" data-odin-edit-comment="${escapeHtml(item.id)}">✏️ Edit</button>
-                      <button type="button" class="odin-diff-action-btn" style="color:#fb7185;border:1px solid rgba(244,63,94,0.45);background:rgba(244,63,94,0.14);" data-odin-delete-comment="${escapeHtml(item.id)}">🗑️ Remove</button>
-                    </div>
-                  </div>
-                </td>`;
-                anchorRow.insertAdjacentElement("afterend", tr);
-              }
+                  </td>`;
+                  anchorRow.insertAdjacentElement("afterend", tr);
+                }
+              });
             });
           });
         };
@@ -1449,6 +1634,37 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
             return;
           }
 
+          const toggleFileModeBtn = ev.target.closest("[data-odin-toggle-file-mode]");
+          if (toggleFileModeBtn) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const card = toggleFileModeBtn.closest("details.odin-diff-file-card");
+            if (!card) return;
+            const cur = card.getAttribute("data-view-mode") || "split";
+            const next = cur === "unified" ? "split" : "unified";
+            card.setAttribute("data-view-mode", next);
+            updateFileModeButtonLabel(card);
+            return;
+          }
+
+          const globalModeBtn = ev.target.closest("[data-mode-btn]");
+          if (globalModeBtn) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const viewer = globalModeBtn.closest(".odin-diff-viewer");
+            if (!viewer) return;
+            const targetMode = globalModeBtn.getAttribute("data-mode-btn") || "auto";
+            viewer.setAttribute("data-view-mode", targetMode);
+            viewer.setAttribute("data-odin-modes-initialized", "true");
+            viewer.querySelectorAll("details.odin-diff-file-card").forEach((card) => {
+              const defMode = card.getAttribute("data-default-view-mode") || "split";
+              card.setAttribute("data-view-mode", targetMode === "auto" ? defMode : targetMode);
+              updateFileModeButtonLabel(card);
+            });
+            syncToolbarActiveModeBtn(viewer);
+            return;
+          }
+
           const approveFileBtn = ev.target.closest("[data-odin-approve-file]");
           if (approveFileBtn) {
             ev.preventDefault();
@@ -1673,6 +1889,8 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
                     }
                   }
                   window.__odinCoEditActive = Boolean(document.querySelector(".odin-inline-file-editor"));
+                  syncPerFileDiffViewModes();
+                  syncStuckFileSummaries();
                   renderSavedComments();
                   renderApprovedFiles();
                 } catch (sErr) {
@@ -1748,10 +1966,12 @@ ODIN_TOP_BANNER_SCRIPT = """  <script id="odin-top-banner-actions">
         });
 
         const initReviewUI = () => {
+          syncPerFileDiffViewModes();
           syncStuckFileSummaries();
           renderSavedComments();
           renderApprovedFiles();
         };
+        window.__odinRefreshDiffReviewUI = initReviewUI;
         if (document.readyState === "loading") {
           document.addEventListener("DOMContentLoaded", initReviewUI);
         } else {
@@ -1859,6 +2079,37 @@ ODIN_SAFE_POLLER_FN = """      const lastServerSnapshots = {};
         if (id) delete lastServerSnapshots[id];
       };
 
+      const getDetailsStateKey = (el, idx) => {
+        if (el.id) return `id:${el.id}`;
+        if (el.hasAttribute("data-iteration")) return `iter:${el.getAttribute("data-iteration")}`;
+        if (el.hasAttribute("data-file-path")) return `file:${el.getAttribute("data-file-path")}`;
+        if (el.hasAttribute("data-delta-id")) return `delta:${el.getAttribute("data-delta-id")}`;
+        const sum = el.querySelector(":scope > summary")?.textContent?.trim();
+        return sum ? `sum:${sum}` : `idx:${idx}`;
+      };
+      const snapshotDetailsOpen = (root) => {
+        const map = new Map();
+        if (!root) return map;
+        if (root.tagName === "DETAILS") {
+          map.set(getDetailsStateKey(root, -1), root.open);
+        }
+        root.querySelectorAll("details").forEach((d, i) => {
+          map.set(getDetailsStateKey(d, i), d.open);
+        });
+        return map;
+      };
+      const restoreDetailsOpen = (root, map) => {
+        if (!root || !map || !map.size) return;
+        if (root.tagName === "DETAILS") {
+          const k = getDetailsStateKey(root, -1);
+          if (map.has(k)) root.open = map.get(k);
+        }
+        root.querySelectorAll("details").forEach((d, i) => {
+          const k = getDetailsStateKey(d, i);
+          if (map.has(k)) d.open = map.get(k);
+        });
+      };
+
       async function pollLatestState() {
         if (window.__odinCoEditActive) return;
         const activeEl = document.activeElement;
@@ -1890,6 +2141,15 @@ ODIN_SAFE_POLLER_FN = """      const lastServerSnapshots = {};
             const exBanners = document.getElementById("odin-top-command-banners");
             if (inBanners && exBanners) {
               ["odin-heimdall-gate-banner", "odin-top-signoff-banner", "odin-top-mimir-banner"].forEach((bId) => {
+                if (bId === "odin-top-mimir-banner" && document.querySelector("#odin-top-mimir-banner:hover")) {
+                  return;
+                }
+                if (
+                  bId === "odin-heimdall-gate-banner" &&
+                  document.querySelector("#odin-heimdall-gate-banner:hover, #odin-heimdall-gate-banner:focus-within")
+                ) {
+                  return;
+                }
                 const inChild = doc.getElementById(bId);
                 const exChild = document.getElementById(bId);
                 const inHtml = inChild ? inChild.outerHTML : "";
@@ -1898,7 +2158,9 @@ ODIN_SAFE_POLLER_FN = """      const lastServerSnapshots = {};
                 } else if (lastServerSnapshots[bId] !== inHtml) {
                   lastServerSnapshots[bId] = inHtml;
                   if (inChild && exChild) {
-                    exChild.outerHTML = inHtml;
+                    const openMap = snapshotDetailsOpen(exChild);
+                    restoreDetailsOpen(inChild, openMap);
+                    exChild.outerHTML = inChild.outerHTML;
                   } else if (inChild && !exChild) {
                     exBanners.insertAdjacentHTML("beforeend", inHtml);
                   } else if (!inChild && exChild) {
@@ -1923,14 +2185,20 @@ ODIN_SAFE_POLLER_FN = """      const lastServerSnapshots = {};
                   }
                 } else if (lastServerSnapshots[id] !== sig) {
                   lastServerSnapshots[id] = sig;
+                  const openMap = snapshotDetailsOpen(existing);
+                  restoreDetailsOpen(incoming, openMap);
                   existing.innerHTML = incoming.innerHTML;
+                  restoreDetailsOpen(existing, openMap);
                   if (inStatus) existing.setAttribute("data-status", inStatus);
                   changed = true;
                 }
               }
             });
 
-            if (changed) syncStepperAndDiff(true);
+            if (changed) {
+              syncStepperAndDiff(true);
+              if (typeof window.__odinRefreshDiffReviewUI === "function") window.__odinRefreshDiffReviewUI();
+            }
             return;
           } catch {}
         }
@@ -1952,9 +2220,16 @@ def _ensure_huginn_phase_body(content: str) -> str:
             body,
             flags=re.IGNORECASE,
         )
-        if re.search(r'<div\b[^>]*class=["\'][^"\']*\bphase-body\b[^"\']*["\']', body, re.IGNORECASE):
+        # Strip empty placeholder <div class="phase-body">...</div> if iteration cards were appended after it
+        body_no_empty_pb = re.sub(
+            r'<div\b[^>]*class=["\'][^"\']*\bphase-body\b[^"\']*["\'][^>]*>\s*(?:<!--[\s\S]*?-->\s*)*</div>',
+            "",
+            body,
+            flags=re.IGNORECASE,
+        )
+        if re.search(r'<div\b[^>]*class=["\'][^"\']*\bphase-body\b[^"\']*["\']', body_no_empty_pb, re.IGNORECASE):
             return body
-        stripped = body.strip()
+        stripped = body_no_empty_pb.strip()
         if not stripped:
             return '\n      <div class="phase-body"></div>\n    '
         return f'\n      <div class="phase-body">\n        {stripped}\n      </div>\n    '
@@ -1991,6 +2266,35 @@ ODIN_LIGHT_THEME_STYLES = """<style id="odin-light-theme-fixes">
     html[data-theme="light"] .open-questions-box { background: rgba(245, 158, 11, 0.12); border-color: rgba(217, 119, 6, 0.55); color: #78350f; }
     html[data-theme="light"] details.odin-iteration-card > summary { background: var(--surface-elevated); color: var(--text); }
     html[data-theme="light"] #odin-env-bar > span { color: var(--text) !important; }
+    /* Top page header scrolls naturally; iteration cards use overflow:clip so sticky file diff headers work */
+    .odin-header, .odin-topbar { position: relative !important; top: auto !important; }
+    details.odin-iteration-card { overflow: clip !important; }
+    details.odin-iteration-card > .iteration-body,
+    details.odin-iteration-card > .odin-iteration-body {
+      padding: 0.9rem 1.15rem;
+      border-top: 1px solid var(--border);
+    }
+    table:not(.odin-diff-split-table):not(.odin-diff-unified-table) {
+      width: 100%;
+      max-width: 100%;
+    }
+    table:not(.odin-diff-split-table):not(.odin-diff-unified-table) th,
+    table:not(.odin-diff-split-table):not(.odin-diff-unified-table) td {
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      vertical-align: top;
+    }
+    :not(pre) > code {
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      white-space: normal;
+    }
+    html[data-theme="light"] :not(pre) > code {
+      color-scheme: light;
+      background: rgba(15, 23, 42, 0.07);
+      color: #0f172a;
+      border-color: rgba(15, 23, 42, 0.18);
+    }
     /* Keep dark code diff surface readable in both light and dark page themes */
     html[data-theme="light"] .odin-diff-viewer {
       color-scheme: dark;
@@ -2155,6 +2459,160 @@ def _replace_or_strip_top_command_banners(content: str, replacement_html: str) -
     return "".join(out_parts), True
 
 
+_TRANSCRIPT_TAG_STRIP_RE = re.compile(
+    r"<system-reminder>[\s\S]*?</system-reminder>"
+    r"|</?command-[^>]*>"
+    r"|<local-command-stdout>[\s\S]*?</local-command-stdout>",
+    re.IGNORECASE,
+)
+
+
+def _clean_transcript_prompt_text(raw_text: str) -> str:
+    cleaned = _TRANSCRIPT_TAG_STRIP_RE.sub("", str(raw_text or ""))
+    return cleaned.strip()
+
+
+def _summarize_raw_prompt_line(text: str, max_len: int = 160) -> str:
+    cleaned = _clean_transcript_prompt_text(text)
+    for raw_line in cleaned.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = re.sub(r"^(?:/(?:odin|grill-me)\b[\s:—-]*)+", "", line, flags=re.IGNORECASE).strip()
+        line = re.sub(r"^(?:#+\s*|[-*•]\s*)+", "", line).strip()
+        line = re.sub(r"\s+", " ", line).strip()
+        if not line:
+            continue
+        if len(line) > max_len:
+            return line[: max_len - 3].rstrip() + "..."
+        return line
+    return ""
+
+
+def _resolve_prompt_summary_candidates(ledger: dict) -> tuple[list[str], list[dict]]:
+    raw_prompts: list[dict] = []
+    session_id = str(ledger.get("session_id") or "").strip()
+    if session_id:
+        try:
+            import odin_transcript
+
+            t_path = odin_transcript.find_transcript(session_id)
+            if t_path:
+                for obj in odin_transcript.read_lines(t_path):
+                    if odin_transcript.is_human_prompt(obj):
+                        raw_txt = _clean_transcript_prompt_text(odin_transcript.prompt_text(obj))
+                        if raw_txt:
+                            seed = _summarize_raw_prompt_line(raw_txt)
+                            raw_prompts.append(
+                                {
+                                    "index": len(raw_prompts) + 1,
+                                    "text": raw_txt,
+                                    "seed": seed or raw_txt[:157],
+                                }
+                            )
+        except Exception:
+            pass
+
+    cur_iter = int(ledger.get("current_iteration", 1) or 1)
+    cur_it_obj: dict = {}
+    iterations = ledger.get("iterations") if isinstance(ledger.get("iterations"), list) else []
+    for it_obj in iterations:
+        if isinstance(it_obj, dict) and int(it_obj.get("iteration", 0) or 0) == cur_iter:
+            cur_it_obj = it_obj
+            break
+    if not cur_it_obj and iterations and isinstance(iterations[-1], dict):
+        cur_it_obj = iterations[-1]
+
+    heimdall_phase = (cur_it_obj.get("phases") or {}).get("heimdall") or {}
+    explicit_sources = (
+        ledger.get("approved_prompt_summary"),
+        heimdall_phase.get("approved_prompt_summary"),
+        heimdall_phase.get("prompt_summary_candidates"),
+        ledger.get("prompt_summary_candidates"),
+    )
+    candidates: list[str] = []
+    for src in explicit_sources:
+        if isinstance(src, list):
+            cleaned_list = [str(item).strip() for item in src if str(item).strip()]
+            if cleaned_list:
+                candidates = cleaned_list
+                break
+
+    if not candidates and raw_prompts:
+        seen_seeds: set[str] = set()
+        for rp in raw_prompts:
+            seed = str(rp.get("seed") or "").strip()
+            if seed and seed not in seen_seeds:
+                seen_seeds.add(seed)
+                candidates.append(seed)
+
+    if not candidates:
+        fallback_title = str(ledger.get("title") or "").strip()
+        if fallback_title:
+            candidates = [fallback_title]
+
+    return candidates, raw_prompts
+
+
+def build_heimdall_prompt_summary_curator_html(ledger: dict, compact: bool = False) -> str:
+    candidates, raw_prompts = _resolve_prompt_summary_candidates(ledger)
+    row_html_parts = []
+    for cand in candidates:
+        cand_esc = html_mod.escape(str(cand), quote=True)
+        row_html_parts.append(
+            f'          <div data-odin-prompt-summary-row="true" style="display:flex;align-items:center;gap:0.5rem;">\n'
+            f'            <input type="checkbox" data-odin-prompt-summary-check checked style="accent-color:var(--emerald, #34d399);cursor:pointer;width:16px;height:16px;" />\n'
+            f'            <input type="text" data-odin-prompt-summary-text value="{cand_esc}" placeholder="Concise 1-line summary bullet for ### Prompt Summary..." '
+            f'style="flex:1;min-width:220px;background:var(--surface, #0f172a);color:var(--text, #f8fafc);border:1px solid rgba(148,163,184,0.38);border-radius:8px;padding:0.4rem 0.7rem;font-size:0.82rem;" />\n'
+            f'            <button type="button" class="btn" data-odin-summary-action="remove-item" title="Remove bullet" '
+            f'style="padding:0.28rem 0.55rem;font-size:0.76rem;color:var(--crimson, #fb7185);border-color:rgba(244,63,94,0.4);">✕</button>\n'
+            f'          </div>'
+        )
+    rows_joined = "\n".join(row_html_parts)
+
+    raw_drawer_html = ""
+    if raw_prompts:
+        raw_items_html = []
+        for rp in raw_prompts:
+            seed_esc = html_mod.escape(str(rp.get("seed") or ""), quote=True)
+            txt_esc = html_mod.escape(str(rp.get("text") or ""))
+            idx_num = int(rp.get("index") or 1)
+            raw_items_html.append(
+                f'              <div style="padding:0.55rem 0.75rem;border-radius:8px;background:var(--surface, #0f172a);border:1px solid rgba(148,163,184,0.28);display:flex;flex-direction:column;gap:0.35rem;">\n'
+                f'                <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;flex-wrap:wrap;">\n'
+                f'                  <span style="font-size:0.74rem;font-weight:700;color:var(--cyan, #38bdf8);">Prompt #{idx_num}</span>\n'
+                f'                  <button type="button" class="btn" data-odin-summary-action="use-raw-prompt" data-prompt-summary-seed="{seed_esc}" style="font-size:0.73rem;padding:0.2rem 0.55rem;">➕ Add to Summary</button>\n'
+                f'                </div>\n'
+                f'                <pre style="margin:0;white-space:pre-wrap;word-break:break-word;font-size:0.76rem;color:var(--muted, #94a3b8);max-height:110px;overflow-y:auto;">{txt_esc}</pre>\n'
+                f'              </div>'
+            )
+        raw_drawer_html = (
+            f'\n          <details data-odin-raw-prompts-drawer style="margin-top:0.35rem;">\n'
+            f'            <summary style="cursor:pointer;font-size:0.77rem;font-weight:700;color:var(--cyan, #38bdf8);">🔍 Reference: Session Prompts from Transcript ({len(raw_prompts)}) — Click to pick or quote</summary>\n'
+            f'            <div style="margin-top:0.5rem;display:flex;flex-direction:column;gap:0.45rem;">\n'
+            + "\n".join(raw_items_html)
+            + "\n            </div>\n          </details>"
+        )
+
+    pad_style = "0.65rem 0.85rem" if compact else "0.8rem 1rem"
+    return (
+        f'        <div class="odin-prompt-summary-curator" data-odin-prompt-summary-curator="true" '
+        f'style="background:var(--surface-elevated);border:1px solid rgba(56,189,248,0.42);border-left:4px solid var(--cyan);border-radius:10px;padding:{pad_style};display:flex;flex-direction:column;gap:0.55rem;">\n'
+        f'          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">\n'
+        f'            <div>\n'
+        f'              <div style="font-size:0.84rem;font-weight:800;color:var(--cyan);">📝 Curate PR Prompt Summary (<code>### Prompt Summary</code>)</div>\n'
+        f'              <div style="font-size:0.76rem;color:var(--muted);margin-top:0.12rem;">Check, uncheck, reorder, or edit the summary bullets that will be published in the Pull Request description (verbatim prompt dumps are disabled).</div>\n'
+        f'            </div>\n'
+        f'            <button type="button" class="btn" data-odin-summary-action="add-item" style="font-size:0.76rem;padding:0.3rem 0.65rem;border-color:rgba(56,189,248,0.55);color:var(--cyan);font-weight:700;">➕ Add Summary Bullet</button>\n'
+        f'          </div>\n'
+        f'          <div data-odin-prompt-summary-list="true" style="display:flex;flex-direction:column;gap:0.42rem;">\n'
+        f'{rows_joined}\n'
+        f'          </div>'
+        f'{raw_drawer_html}\n'
+        f'        </div>'
+    )
+
+
 def sync_top_banners_in_html(content: str, ledger: dict, telemetry: dict | None = None) -> str:
     content = _ensure_light_mode_styles(content)
     content = _ensure_huginn_phase_body(content)
@@ -2291,6 +2749,7 @@ def sync_top_banners_in_html(content: str, ledger: dict, telemetry: dict | None 
 
     # 3. Phase 3 Heimdall Pre-PR Code Review Gate Banner
     if heimdall_status == "awaiting_human":
+        curator_html = build_heimdall_prompt_summary_curator_html(ledger)
         banner_parts.append(
             '      <div id="odin-heimdall-gate-banner" style="background:linear-gradient(90deg,rgba(245,158,11,0.18),rgba(56,189,248,0.12));'
             'border:1px solid rgba(245,158,11,0.6);border-left:5px solid var(--gold);border-radius:14px;padding:1rem 1.25rem;'
@@ -2301,13 +2760,14 @@ def sync_top_banners_in_html(content: str, ledger: dict, telemetry: dict | None 
             '              <span class="badge-awaiting_human" style="font-size:0.76rem;">🛡️ HEIMDALL PRE-PR CODE REVIEW GATE</span>\n'
             '              <span class="badge-done" style="font-size:0.74rem;">✅ AUTOMATED TESTS &amp; LINTERS PASSED</span>\n'
             '            </div>\n'
-            '            <div style="font-size:0.86rem;margin-top:0.35rem;color:var(--text);">Review the Side-by-Side contextual code diff in <code>#heimdall-validation</code> below. Click <strong>Approve Code Diff &amp; Open PR</strong> to wake the agent and advance to Phase 4, or request code changes to step back to Thor.</div>\n'
+            '            <div style="font-size:0.86rem;margin-top:0.35rem;color:var(--text);">Review the Side-by-Side contextual code diff in <code>#heimdall-validation</code> below and curate the PR <code>### Prompt Summary</code> bullets. Click <strong>Approve Code Diff &amp; Open PR</strong> to wake the agent and advance to Phase 4, or request code changes to step back to Thor.</div>\n'
             '          </div>\n'
             '          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">\n'
             '            <button type="button" class="btn" data-odin-top-action="approve-heimdall-pr" style="border-color:rgba(16,185,129,0.65);background:rgba(16,185,129,0.22);color:var(--emerald);font-weight:700;padding:0.5rem 0.95rem;">✅ Approve Code Diff &amp; Open PR (Wake Agent)</button>\n'
             '            <button type="button" class="btn" data-odin-top-action="reject-heimdall-pr" style="border-color:rgba(244,63,94,0.55);background:rgba(244,63,94,0.16);color:var(--crimson);font-weight:700;padding:0.5rem 0.95rem;">🚨 Request Code Changes (Step Back to Thor)</button>\n'
             '          </div>\n'
             '        </div>\n'
+            f'{curator_html}\n'
             '        <div style="display:flex;gap:0.65rem;align-items:center;flex-wrap:wrap;">\n'
             '          <input id="odin-heimdall-note-input" type="text" placeholder="Optional PR review note or requested code change reason..." '
             'style="flex:1;min-width:260px;background:var(--surface-elevated);color:var(--text);border:1px solid rgba(148,163,184,0.38);border-radius:8px;padding:0.45rem 0.75rem;font-size:0.82rem;" />\n'
@@ -2355,13 +2815,19 @@ def sync_top_banners_in_html(content: str, ledger: dict, telemetry: dict | None 
 
     if deltas:
         in_progress_deltas = [d for d in deltas if str(d.get("status") or "").lower() == "in_progress"]
+        applied_deltas = [d for d in deltas if str(d.get("status") or "").lower() == "applied"]
+        dismissed_deltas = [d for d in deltas if str(d.get("status") or "").lower() == "dismissed"]
         is_open = " open"
         if len(pending_deltas) > 0:
             header_badge = f'<span class="badge-awaiting_human">⏳ {len(pending_deltas)} PENDING APPROVAL</span>'
         elif len(in_progress_deltas) > 0:
             header_badge = f'<span class="badge-active">⚡ {len(in_progress_deltas)} IN PROGRESS (TICKET SPAWNED)</span>'
+        elif len(applied_deltas) > 0 and len(dismissed_deltas) > 0:
+            header_badge = f'<span class="badge-done">✅ {len(applied_deltas)} APPLIED • 🚫 {len(dismissed_deltas)} DISMISSED</span>'
+        elif len(dismissed_deltas) > 0:
+            header_badge = f'<span class="badge-pending">🚫 {len(dismissed_deltas)} DISMISSED</span>'
         else:
-            header_badge = f'<span class="badge-done">✅ {len(deltas)} APPROVED &amp; APPLIED</span>'
+            header_badge = f'<span class="badge-done">✅ {len(applied_deltas)} APPROVED &amp; APPLIED</span>'
         items_html = []
         for d in deltas:
             d_id = html_mod.escape(str(d.get("id") or "delta"))
@@ -2433,8 +2899,9 @@ def sync_top_banners_in_html(content: str, ledger: dict, telemetry: dict | None 
                 else ""
             )
 
+            has_ticket_attr = "true" if spawned_ticket_url else "false"
             items_html.append(
-                f'          <div class="odin-top-delta-item" data-delta-id="{d_id}" data-status="{html_mod.escape(d_status)}" '
+                f'          <div class="odin-top-delta-item" data-delta-id="{d_id}" data-status="{html_mod.escape(d_status)}" data-has-ticket="{has_ticket_attr}" '
                 f'style="margin-top:0.75rem;padding:0.95rem 1.1rem;border-radius:12px;background:var(--surface-elevated);border:1px solid rgba(168,85,247,0.38);">\n'
                 f'            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.55rem;">\n'
                 f'              <div style="display:flex;align-items:center;gap:0.45rem;flex-wrap:wrap;">\n'
@@ -2776,7 +3243,7 @@ def collapse_prior_details_in_section(sec_body: str, prev_iter: int, phase_label
 def mutate_section_body(content: str, sec_id: str, mutator_fn) -> str:
     sec_pat = SECTION_REGEX_MAP.get(sec_id, re.escape(sec_id))
     pattern = re.compile(
-        rf'(<section\b[^>]*\bid=["\']{sec_pat}["\'][^>]*>\s*(?:<div\b[^>]*\bclass=["\'][^"\']*phase-header[^"\']*["\'][^>]*>(?:(?!</div>)[\s\S])*?</div>|<h2\b[^>]*>(?:(?!</h2>)[\s\S])*?</h2>))((?:(?!</section>)[\s\S])*?)(</section>)',
+        rf'(<section\b[^>]*\bid=["\']{sec_pat}["\'][^>]*>(?:\s*<style\b[^>]*>[\s\S]*?</style>)*\s*(?:<div\b[^>]*\bclass=["\'][^"\']*phase-header[^"\']*["\'][^>]*>(?:(?!</div>)[\s\S])*?</div>|<h2\b[^>]*>(?:(?!</h2>)[\s\S])*?</h2>))((?:(?!</section>)[\s\S])*?)(</section>)',
         re.IGNORECASE,
     )
     match = pattern.search(content)
@@ -3253,6 +3720,13 @@ def cmd_step_back(args: argparse.Namespace) -> int:
 
 ODIN_DIFF_STYLES = """<style id="odin-diff-styles">
   /* Odin Contextual Code Diff, Inline Review & File Editor */
+  .odin-header, .odin-topbar {
+    position: relative !important;
+    top: auto !important;
+  }
+  details.odin-iteration-card {
+    overflow: clip !important;
+  }
   .odin-diff-viewer {
     margin: 1rem 0 0.5rem;
     border: 1px solid rgba(56, 189, 248, 0.35);
@@ -3384,7 +3858,7 @@ ODIN_DIFF_STYLES = """<style id="odin-diff-styles">
     cursor: pointer;
     list-style: none;
     position: sticky;
-    top: var(--odin-sticky-top-offset, 48px);
+    top: var(--odin-sticky-top-offset, 0px);
     z-index: 35;
     container-type: scroll-state;
     container-name: odin-diff-file-header;
@@ -3507,9 +3981,23 @@ ODIN_DIFF_STYLES = """<style id="odin-diff-styles">
   .odin-diff-editor-link:hover {
     background: rgba(56, 189, 248, 0.22);
   }
+  .odin-diff-file-mode-btn {
+    color: #38bdf8 !important;
+    background: rgba(56, 189, 248, 0.14);
+    border: 1px solid rgba(56, 189, 248, 0.42);
+  }
+  .odin-diff-file-mode-btn:hover {
+    background: rgba(56, 189, 248, 0.26);
+    border-color: #38bdf8;
+  }
+  .odin-diff-file-mode-btn[data-view-mode="unified"] {
+    color: #fbbf24 !important;
+    background: rgba(245, 158, 11, 0.16);
+    border-color: rgba(245, 158, 11, 0.48);
+  }
   .odin-file-comment-drawer {
     position: sticky;
-    top: calc(var(--odin-sticky-top-offset, 48px) + 44px);
+    top: calc(var(--odin-sticky-top-offset, 0px) + var(--odin-file-summary-height, 44px));
     z-index: 34;
     padding: 0.75rem 1.05rem;
     background: rgba(15, 23, 42, 0.98) !important;
@@ -3531,10 +4019,16 @@ ODIN_DIFF_STYLES = """<style id="odin-diff-styles">
     color: #38bdf8 !important;
   }
   .odin-diff-hunk-header {
+    position: sticky;
+    top: calc(var(--odin-sticky-top-offset, 0px) + var(--odin-file-summary-height, 44px));
+    z-index: 32;
     padding: 0.35rem 0.9rem;
-    background: rgba(30, 41, 59, 0.85) !important;
+    background: rgba(15, 23, 42, 0.95) !important;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     border-top: 1px solid #1e293b;
-    border-bottom: 1px solid #1e293b;
+    border-bottom: 1px solid rgba(56, 189, 248, 0.3);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
     font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 0.75rem;
     color: #cbd5e1 !important;
@@ -3563,8 +4057,15 @@ ODIN_DIFF_STYLES = """<style id="odin-diff-styles">
     table-layout: fixed;
     background: #070b14 !important;
   }
-  .odin-diff-viewer[data-view-mode="split"] .odin-diff-unified-table { display: none; }
-  .odin-diff-viewer[data-view-mode="unified"] .odin-diff-split-table { display: none; }
+  .odin-diff-file-card[data-view-mode="split"] .odin-diff-unified-table,
+  .odin-diff-viewer[data-view-mode="split"] .odin-diff-file-card:not([data-view-mode]) .odin-diff-unified-table,
+  .odin-diff-viewer[data-view-mode="auto"] .odin-diff-file-card:not([data-view-mode]) .odin-diff-unified-table {
+    display: none;
+  }
+  .odin-diff-file-card[data-view-mode="unified"] .odin-diff-split-table,
+  .odin-diff-viewer[data-view-mode="unified"] .odin-diff-file-card:not([data-view-mode]) .odin-diff-split-table {
+    display: none;
+  }
   .odin-diff-viewer table.odin-diff-split-table td,
   .odin-diff-viewer table.odin-diff-unified-table td {
     border: none !important;
@@ -3761,7 +4262,64 @@ ODIN_DIFF_STYLES = """<style id="odin-diff-styles">
 </style>"""
 
 
+ODIN_DIFF_UNIFIED_LINE_THRESHOLD = 100
+
+
+def _upgrade_existing_diff_cards_in_html(content: str) -> str:
+    """Ensure existing <details class="odin-diff-file-card"> blocks carry per-file data-view-mode based on the 100-line threshold."""
+    if "odin-diff-file-card" not in content:
+        return content
+
+    content = re.sub(
+        r'(<div\b[^>]*\bclass=["\'][^"\']*\bodin-diff-viewer\b[^"\']*["\'][^>]*?)\bdata-view-mode=["\']split["\'](?![^>]*\bdata-unified-threshold=)',
+        rf'\1data-view-mode="auto" data-unified-threshold="{ODIN_DIFF_UNIFIED_LINE_THRESHOLD}"',
+        content,
+        flags=re.IGNORECASE,
+    )
+
+    def _patch_card(m: re.Match) -> str:
+        open_tag = m.group(1)
+        summary_block = m.group(2)
+        if "data-view-mode=" in open_tag:
+            return m.group(0)
+        add_m = re.search(r'class=["\'][^"\']*\bodin-diff-stat-add\b[^"\']*["\'][^>]*>\+?(\d+)<', summary_block, re.IGNORECASE)
+        del_m = re.search(r'class=["\'][^"\']*\bodin-diff-stat-del\b[^"\']*["\'][^>]*>-?(\d+)<', summary_block, re.IGNORECASE)
+        adds = int(add_m.group(1)) if add_m else 0
+        dels = int(del_m.group(1)) if del_m else 0
+        changed = adds + dels
+        mode = "unified" if changed >= ODIN_DIFF_UNIFIED_LINE_THRESHOLD else "split"
+        label = f"☰ Unified ({changed} lines)" if mode == "unified" else "◫ Split"
+        fp_m = re.search(r'\bdata-file-path=["\']([^"\']*)["\']', open_tag, re.IGNORECASE)
+        fp_esc = fp_m.group(1) if fp_m else ""
+        patched_open = (
+            open_tag[:-1]
+            + f' data-view-mode="{mode}" data-default-view-mode="{mode}" data-changed-lines="{changed}">'
+        )
+        if "data-odin-toggle-file-mode" not in summary_block:
+            btn_html = (
+                f'<button type="button" class="odin-diff-action-btn odin-diff-file-mode-btn" '
+                f'data-odin-toggle-file-mode="{fp_esc}" data-view-mode="{mode}" '
+                f'title="Toggle Side-by-Side (Split) vs. Unified view for this file ({changed} changed lines)">{label}</button>'
+            )
+            summary_block = re.sub(
+                r'(<button\b[^>]*\bdata-odin-approve-file=)',
+                lambda bm: btn_html + bm.group(1),
+                summary_block,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+        return patched_open + summary_block
+
+    return re.sub(
+        r'(<details\b[^>]*\bclass=["\'][^"\']*\bodin-diff-file-card\b[^"\']*["\'][^>]*>)(\s*<summary>[\s\S]*?</summary>)',
+        _patch_card,
+        content,
+        flags=re.IGNORECASE,
+    )
+
+
 def ensure_diff_styles(content: str) -> str:
+    content = _upgrade_existing_diff_cards_in_html(content)
     style_pat = re.compile(
         r'\s*<style[^>]*id=["\']odin-diff-styles["\'][^>]*>[\s\S]*?</style>',
         re.IGNORECASE,
@@ -4122,7 +4680,7 @@ def generate_contextual_diff_html(
     rationale_esc = html_mod.escape(rationale or "")
     notes_json_esc = html_mod.escape(json.dumps(file_notes or {}))
     parts.append(
-        f'<div class="odin-diff-viewer" data-view-mode="split" data-worktree="{worktree_esc}" '
+        f'<div class="odin-diff-viewer" data-view-mode="auto" data-unified-threshold="{ODIN_DIFF_UNIFIED_LINE_THRESHOLD}" data-worktree="{worktree_esc}" '
         f'data-repo="{html_mod.escape(repo_name)}" data-context-lines="{context_lines}" '
         f'data-rationale="{rationale_esc}" data-file-notes="{notes_json_esc}">'
     )
@@ -4136,11 +4694,14 @@ def generate_contextual_diff_html(
         f'<span style="font-size:0.74rem;color:#94a3b8;font-weight:500;">• {html_mod.escape(diff_source_label)} • {context_lines}-line deep context • Sticky file header &amp; click any line to comment</span>'
         "</div>"
         '<div class="odin-diff-mode-group">'
-        '<button type="button" class="odin-diff-btn active" data-mode-btn="split" '
-        'onclick="const v=this.closest(\'.odin-diff-viewer\');v.setAttribute(\'data-view-mode\',\'split\');v.querySelectorAll(\'[data-mode-btn]\').forEach(b=>b.classList.toggle(\'active\',b.dataset.modeBtn===\'split\'));">'
+        '<button type="button" class="odin-diff-btn active" data-mode-btn="auto" '
+        'onclick="const v=this.closest(\'.odin-diff-viewer\');v.setAttribute(\'data-view-mode\',\'auto\');v.querySelectorAll(\'details.odin-diff-file-card\').forEach(c=>c.setAttribute(\'data-view-mode\',c.getAttribute(\'data-default-view-mode\')||\'split\'));v.querySelectorAll(\'[data-mode-btn]\').forEach(b=>b.classList.toggle(\'active\',b.dataset.modeBtn===\'auto\'));">'
+        f"⚡ Auto ({ODIN_DIFF_UNIFIED_LINE_THRESHOLD}+ Lines → Unified)</button>"
+        '<button type="button" class="odin-diff-btn" data-mode-btn="split" '
+        'onclick="const v=this.closest(\'.odin-diff-viewer\');v.setAttribute(\'data-view-mode\',\'split\');v.querySelectorAll(\'details.odin-diff-file-card\').forEach(c=>c.setAttribute(\'data-view-mode\',\'split\'));v.querySelectorAll(\'[data-mode-btn]\').forEach(b=>b.classList.toggle(\'active\',b.dataset.modeBtn===\'split\'));">'
         "◫ Side-by-Side (Split)</button>"
         '<button type="button" class="odin-diff-btn" data-mode-btn="unified" '
-        'onclick="const v=this.closest(\'.odin-diff-viewer\');v.setAttribute(\'data-view-mode\',\'unified\');v.querySelectorAll(\'[data-mode-btn]\').forEach(b=>b.classList.toggle(\'active\',b.dataset.modeBtn===\'unified\'));">'
+        'onclick="const v=this.closest(\'.odin-diff-viewer\');v.setAttribute(\'data-view-mode\',\'unified\');v.querySelectorAll(\'details.odin-diff-file-card\').forEach(c=>c.setAttribute(\'data-view-mode\',\'unified\'));v.querySelectorAll(\'[data-mode-btn]\').forEach(b=>b.classList.toggle(\'active\',b.dataset.modeBtn===\'unified\'));">'
         "☰ Unified Diff</button>"
         '<button type="button" class="odin-diff-btn" '
         'onclick="const v=this.closest(\'.odin-diff-viewer\');const cards=v.querySelectorAll(\'details.odin-diff-file-card\');const anyOpen=Array.from(cards).some(c=>c.open);cards.forEach(c=>c.open=!anyOpen);">'
@@ -4164,6 +4725,9 @@ def generate_contextual_diff_html(
         vscode_url = f"vscode://file/{abs_path}:{first_line}"
         file_url = f"file://{abs_path}"
         repo_rel_key = f"{repo_name}/{rel_path}"
+        file_changed_lines = fobj["adds"] + fobj["dels"]
+        file_default_mode = "unified" if file_changed_lines >= ODIN_DIFF_UNIFIED_LINE_THRESHOLD else "split"
+        file_mode_label = f"☰ Unified ({file_changed_lines} lines)" if file_default_mode == "unified" else "◫ Split"
 
         # Match file note by repo/rel_path, exact rel_path, or basename
         note_html = ""
@@ -4173,7 +4737,7 @@ def generate_contextual_diff_html(
                 break
 
         parts.append(
-            f'<details class="odin-diff-file-card" open data-worktree="{worktree_esc}" data-repo="{html_mod.escape(repo_name)}" data-file-path="{rel_path_esc}" data-first-line="{first_line}">'
+            f'<details class="odin-diff-file-card" open data-worktree="{worktree_esc}" data-repo="{html_mod.escape(repo_name)}" data-file-path="{rel_path_esc}" data-first-line="{first_line}" data-view-mode="{file_default_mode}" data-default-view-mode="{file_default_mode}" data-changed-lines="{file_changed_lines}">'
             f"<summary>"
             f'<div class="odin-diff-file-summary-inner">'
             f'<div class="odin-diff-file-meta">'
@@ -4183,6 +4747,7 @@ def generate_contextual_diff_html(
             f'<span class="odin-diff-line-hint">📌 Sticky Header • 💬 Click any line to comment</span>'
             f"</div>"
             f'<div class="odin-diff-file-meta">'
+            f'<button type="button" class="odin-diff-action-btn odin-diff-file-mode-btn" data-odin-toggle-file-mode="{rel_path_esc}" data-view-mode="{file_default_mode}" title="Toggle Side-by-Side (Split) vs. Unified view for this file ({file_changed_lines} changed lines)">{file_mode_label}</button>'
             f'<button type="button" class="odin-diff-action-btn odin-diff-approve-btn" data-odin-approve-file="{rel_path_esc}" data-repo="{html_mod.escape(repo_name)}" aria-pressed="false">☑️ Approve File</button>'
             f'<button type="button" class="odin-diff-action-btn odin-diff-comment-btn" data-odin-comment-file="{rel_path_esc}" data-repo="{html_mod.escape(repo_name)}" data-first-line="{first_line}">💬 Comment on File</button>'
             f'<a class="odin-diff-editor-link" href="{html_mod.escape(vscode_url)}" onclick="event.stopPropagation();">⚡ IDE (L{first_line})</a>'
@@ -4409,6 +4974,19 @@ def cmd_update_phase(args: argparse.Namespace) -> int:
             if int(it_obj.get("iteration", 0)) == target_iter:
                 it_obj["incident_waiver"] = incident_waiver
 
+    prompt_summary_items = [
+        str(s).strip()
+        for s in (getattr(args, "prompt_summary_item", None) or [])
+        if str(s).strip()
+    ]
+    if prompt_summary_items:
+        ledger["prompt_summary_candidates"] = prompt_summary_items
+        for it_obj in ledger.get("iterations", []):
+            if int(it_obj.get("iteration", 0)) == target_iter:
+                it_obj.setdefault("phases", {}).setdefault("heimdall", {})[
+                    "prompt_summary_candidates"
+                ] = prompt_summary_items
+
     if phase_key == "hlidskjalf" and args.status == "done":
         unaddressed = _unaddressed_friction_events(ledger)
         if unaddressed:
@@ -4526,11 +5104,21 @@ def cmd_update_phase(args: argparse.Namespace) -> int:
             for rec_k, rec_status in auto_reconciled.items():
                 phases_dict.setdefault(rec_k, {})["status"] = rec_status
                 phases_dict[rec_k]["updated_at"] = now_iso()
-            phases_dict[phase_key] = {
-                "status": args.status,
-                "updated_at": now_iso(),
-                "summary": args.summary or summary_title,
-            }
+            prev_phase_entry = phases_dict.get(phase_key) if isinstance(phases_dict.get(phase_key), dict) else {}
+            updated_phase_entry = dict(prev_phase_entry)
+            updated_phase_entry.update(
+                {
+                    "status": args.status,
+                    "updated_at": now_iso(),
+                    "summary": args.summary or summary_title,
+                }
+            )
+            if prompt_summary_items:
+                if phase_key == "heimdall":
+                    updated_phase_entry["prompt_summary_candidates"] = prompt_summary_items
+                else:
+                    phases_dict.setdefault("heimdall", {})["prompt_summary_candidates"] = prompt_summary_items
+            phases_dict[phase_key] = updated_phase_entry
             if files_list:
                 it_obj["files_touched"] = files_list
             if pr_url:
@@ -4538,19 +5126,24 @@ def cmd_update_phase(args: argparse.Namespace) -> int:
             if phase_key == "human" and args.status in ("done", "awaiting_human", "reject"):
                 it_obj["status"] = args.status
     if not found_iter:
+        new_phase_entry = {
+            "status": args.status,
+            "updated_at": now_iso(),
+            "summary": args.summary or summary_title,
+        }
+        if prompt_summary_items and phase_key == "heimdall":
+            new_phase_entry["prompt_summary_candidates"] = prompt_summary_items
         new_it = {
             "iteration": target_iter,
             "started_at": now_iso(),
             "status": args.status,
             "phases": {
-                phase_key: {
-                    "status": args.status,
-                    "updated_at": now_iso(),
-                    "summary": args.summary or summary_title,
-                }
+                phase_key: new_phase_entry,
             },
             "harness_delta_proposals": [],
         }
+        if prompt_summary_items and phase_key != "heimdall":
+            new_it["phases"]["heimdall"] = {"prompt_summary_candidates": prompt_summary_items}
         if files_list:
             new_it["files_touched"] = files_list
         if pr_url:
@@ -5002,6 +5595,16 @@ def sync_parent_mimir_delta_on_completion(
     if not delta_id or not parent_file_str:
         return None
 
+    target_delta_ids: set[str] = set()
+    for single_val in (origin.get("delta_id"), ledger.get("parent_delta_id")):
+        if single_val and str(single_val).strip():
+            target_delta_ids.add(str(single_val).strip())
+    for list_val in (origin.get("delta_ids"), ledger.get("parent_delta_ids")):
+        if isinstance(list_val, (list, tuple, set)):
+            for item in list_val:
+                if item and str(item).strip():
+                    target_delta_ids.add(str(item).strip())
+
     parent_path = Path(parent_file_str)
     if not parent_path.is_absolute():
         parent_path = (Path(AI_DEV_ROOT) / parent_file_str).resolve()
@@ -5018,10 +5621,25 @@ def sync_parent_mimir_delta_on_completion(
         child_rel = str(Path(child_html_path).resolve().relative_to(Path(AI_DEV_ROOT).resolve())).replace("\\", "/")
     except ValueError:
         child_rel = f"odin-states/{Path(child_html_path).name}"
+    child_rel_norm = child_rel.lstrip("/")
+    matched_ids: list[str] = []
+
+    def _matches_child_ticket(d: dict) -> bool:
+        d_id = str(d.get("id") or "").strip()
+        if d_id and d_id in target_delta_ids:
+            return True
+        spawned_rel = str(d.get("spawned_ticket_id") or "").strip().lstrip("/")
+        if spawned_rel and spawned_rel == child_rel_norm:
+            return True
+        return False
+
     changed = False
     for it_obj in p_ledger.get("iterations", []):
         for d in it_obj.get("harness_delta_proposals", []):
-            if d.get("id") == delta_id:
+            if _matches_child_ticket(d):
+                d_id = str(d.get("id") or "").strip()
+                if d_id and d_id not in matched_ids:
+                    matched_ids.append(d_id)
                 if d.get("status") != "applied" or d.get("spawned_ticket_id") != child_rel:
                     d["status"] = "applied"
                     d["spawned_ticket_id"] = child_rel
@@ -5030,7 +5648,10 @@ def sync_parent_mimir_delta_on_completion(
                     d["updated_at"] = now_iso()
                     changed = True
     for d in p_ledger.get("harness_delta_proposals", []):
-        if d.get("id") == delta_id:
+        if _matches_child_ticket(d):
+            d_id = str(d.get("id") or "").strip()
+            if d_id and d_id not in matched_ids:
+                matched_ids.append(d_id)
             if d.get("status") != "applied" or d.get("spawned_ticket_id") != child_rel:
                 d["status"] = "applied"
                 d["spawned_ticket_id"] = child_rel
@@ -5044,6 +5665,7 @@ def sync_parent_mimir_delta_on_completion(
         parent_path.write_text(p_content, encoding="utf-8")
     return {
         "deltaId": delta_id,
+        "deltaIds": matched_ids or sorted(target_delta_ids),
         "parentStateFile": str(parent_path),
         "childTicketId": child_rel,
         "status": "applied",
@@ -5374,12 +5996,16 @@ def write_wakeup_event(
     phase: str = "",
     notes: str = "",
     selected_skills: list | None = None,
+    approved_prompt_summary: list[str] | None = None,
     extra: dict | None = None,
 ) -> Path:
     p = Path(html_path).resolve()
     slug = p.stem
     states_dir = _get_odin_states_dir_for_html(p)
     wakeup_file = states_dir / f".odin-wakeup-{slug}.json"
+    cleaned_summary = [
+        str(s).strip() for s in (approved_prompt_summary or []) if str(s).strip()
+    ]
     payload = {
         "slug": slug,
         "file": str(p),
@@ -5387,6 +6013,7 @@ def write_wakeup_event(
         "phase": phase,
         "notes": notes,
         "selectedSkills": list(selected_skills or []),
+        "approvedPromptSummary": cleaned_summary,
         "timestamp": now_iso(),
     }
     if extra:
@@ -5576,6 +6203,11 @@ def cmd_wait_for_human(args: argparse.Namespace) -> int:
                     print(f"\n⚡ Partner Attached Skills to Activate: {' '.join(skills)}")
                 if event.get("notes"):
                     print(f"\n💬 Partner Notes / Instructions:\n{event['notes']}")
+                approved_summary = event.get("approvedPromptSummary") or []
+                if approved_summary:
+                    print("\n📝 Approved PR Prompt Summary (use for ### Prompt Summary):")
+                    for idx, item in enumerate(approved_summary, 1):
+                        print(f"{idx}. {item}")
                 return 0
 
             if timeout_sec > 0 and (now_ts - started_at) >= timeout_sec:
@@ -6289,6 +6921,12 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--pr-url", help="GitHub Pull Request URL to stamp on <body> and render in the header & phase card")
     up.add_argument("--session-id", dest="session_id", help="Optional session ID to bind onto <body data-session-id>")
     up.add_argument("--incident-waiver", dest="incident_waiver", help="Explicit Phase 4 waiver reason when mid-flight incidents/failed checks do not require a Mímir Harness Delta")
+    up.add_argument(
+        "--prompt-summary-item",
+        action="append",
+        default=[],
+        help="Candidate bullet for ### Prompt Summary in Phase 3 Heimdall Pre-PR Gate (repeatable).",
+    )
     up.set_defaults(func=cmd_update_phase)
 
     lg = sub.add_parser("log", help="Append a progress entry to a phase's iteration card (no status change, no notification)")

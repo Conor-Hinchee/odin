@@ -133,20 +133,22 @@ graph TD
 
 ### Phase 3: Heimdall (verify + pre-PR review gate)
 - Check the work against the testing strategy and Definition of Done.
-- When code changed, render the contextual diff in the state file:
+- When code changed, render the contextual diff and seed candidate `### Prompt Summary` bullets in the state file:
   ```bash
   python3 "$ODIN/odin-state.py" update-phase --file "odin-states/<task-slug>.html" \
     --phase heimdall --status awaiting_human \
     --title "🛡️ Iteration N — Heimdall Verification & Pre-PR Review" \
     --summary "Tests and linters pass. Review the diff to approve opening the PR." \
+    --prompt-summary-item "<concise 1-line summary of prompt 1>" \
+    --prompt-summary-item "<concise 1-line summary of prompt 2>" \
     --with-diff --diff-context 12 \
     --diff-rationale "<what changed and why>" \
     --file-note "<path>=<why this file changed>" \
     --html "<test and lint results>"
   ```
-  The review shows 12 lines of context, a rationale banner, per-file notes, split and unified views with word-level highlights, and line or whole-file comments.
-- **Pre-PR gate.** If tests pass and no PR exists yet, do not skip ahead. Pause at `awaiting_human`, ask the user to approve opening the PR, and arm the watcher. After approval, mark the phase active (first call), push the branch, and open the PR. Then run `update-phase --phase heimdall --status done --with-diff --pr-url "<url>"`, which stamps `data-pr-url` and the 🔗 PR badge.
-- **PR body.** The PR is read on GitHub, where the state file's review card isn't visible, so the body must describe the change itself. Start with a `## Summary` that says what changed and why: every behaviour change, including the defaults you chose for open questions (such as "unknown regions raise `ValueError`" or "region codes match case-insensitively"); every deleted file, function or public API; and the tests added. Reuse the `--diff-rationale` and `--file-note` text from the pre-PR review. After it, add a `### Prompt Summary` bullet list of the user's prompts. A body that is only the Prompt Summary is incomplete. If the user has a `pr` block in their Odin config, the plugin's PreToolUse hook adds the configured label, a session telemetry section and the verbatim prompts, and asks the user to confirm the rewritten command. Never write a bare `#<digits>` for numbered rules or steps ("Rule 12", not "Rule #12"), because GitHub links those to unrelated issues.
+  The review shows 12 lines of context, a rationale banner, per-file notes, split and unified views with word-level highlights, line or whole-file comments, and an interactive **📝 Curate PR Prompt Summary (`### Prompt Summary`)** panel in the Heimdall Pre-PR Gate banner (auto-seeded from `--prompt-summary-item` or the session transcript).
+- **Pre-PR gate.** If tests pass and no PR exists yet, do not skip ahead. Pause at `awaiting_human`, ask the user to review the diff and curate/approve the `### Prompt Summary` bullets before opening the PR, and arm the watcher. When the user clicks **✅ Approve Code Diff & Open PR**, the wakeup JSON includes `approvedPromptSummary`. After approval, mark the phase active (first call), push the branch, and open the PR using the approved `### Prompt Summary` bullets. Then run `update-phase --phase heimdall --status done --with-diff --pr-url "<url>"`, which stamps `data-pr-url` and the 🔗 PR badge.
+- **PR body.** The PR is read on GitHub, where the state file's review card isn't visible, so the body must describe the change itself. Start with a `## Summary` that says what changed and why: every behaviour change, including the defaults you chose for open questions (such as "unknown regions raise `ValueError`" or "region codes match case-insensitively"); every deleted file, function or public API; and the tests added. Reuse the `--diff-rationale` and `--file-note` text from the pre-PR review. After it, add a `### Prompt Summary` bullet list using the human-curated bullets from the Heimdall Pre-PR Gate (`approvedPromptSummary`). A body that is only the Prompt Summary is incomplete. If the user has a `pr` block in their Odin config, the plugin's PreToolUse hook adds the configured label and a session telemetry section (verbatim prompt dumps are off by default unless `pr.include_verbatim_prompts: true` is explicitly configured), denies a body that says nothing about the change beyond the Prompt Summary (`pr.require_change_summary`, on by default), and asks the user to confirm the rewritten command. Never write a bare `#<digits>` for numbered rules or steps ("Rule 12", not "Rule #12"), because GitHub links those to unrelated issues.
 - **REJECT**: mark `reject` (which notifies), and route the specific failures back to phase 2.
 
 ### Phase 4: Hlidskjalf (retrospective)

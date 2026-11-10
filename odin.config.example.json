@@ -37,7 +37,8 @@
     "label": "ai-generated",
     "heading": "## 🤖 Session Telemetry",
     "require_prompt_summary": true,
-    "sanitize_hash_refs": true
+    "sanitize_hash_refs": true,
+    "include_verbatim_prompts": false
   },
   "progress": {
     "capture": true,

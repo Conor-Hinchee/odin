@@ -41,7 +41,7 @@ DEFAULTS = {
     ],
     # {command: "my-cli --json", columns: [{key, label}], title}
     "telemetry": None,
-    # {label, heading, require_prompt_summary, require_change_summary, sanitize_hash_refs}
+    # {label, heading, require_prompt_summary, require_change_summary, sanitize_hash_refs, include_verbatim_prompts}
     "pr": None,
     # {repo_dir, staging_dir, branch}
     "staging": {},

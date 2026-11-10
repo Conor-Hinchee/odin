@@ -938,6 +938,285 @@ class TestOdin(unittest.TestCase):
         )
         self.assertIn('data-app-port=""', external_html)
 
+    def test_non_sticky_page_header_sticky_file_hunk_and_100_line_unified_threshold(self):
+        import subprocess
+
+        state_tpl = (ODIN_ROOT / "references" / "state-template.html").read_text(encoding="utf-8")
+        self.assertIn(".odin-header {\n      position: relative;\n      z-index: 40;", state_tpl)
+        self.assertIn("details.odin-iteration-card {\n      background: var(--surface-elevated);\n      border: 1px solid var(--border);\n      border-radius: 12px;\n      margin: 0.85rem 0;\n      overflow: clip;", state_tpl)
+
+        diff_styles = self.odin_state.ODIN_DIFF_STYLES
+        self.assertIn("position: relative !important;", diff_styles)
+        self.assertIn("overflow: clip !important;", diff_styles)
+        self.assertIn("top: var(--odin-sticky-top-offset, 0px);", diff_styles)
+        self.assertIn("top: calc(var(--odin-sticky-top-offset, 0px) + var(--odin-file-summary-height, 44px));", diff_styles)
+        self.assertIn('.odin-diff-file-card[data-view-mode="split"] .odin-diff-unified-table', diff_styles)
+        self.assertIn('.odin-diff-file-card[data-view-mode="unified"] .odin-diff-split-table', diff_styles)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-b", "main"], cwd=str(repo), check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=str(repo), check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(repo), check=True, capture_output=True)
+
+            (repo / "small.py").write_text("x = 1\n", encoding="utf-8")
+            (repo / "large.py").write_text("y = 1\n", encoding="utf-8")
+            subprocess.run(["git", "add", "small.py", "large.py"], cwd=str(repo), check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), check=True, capture_output=True)
+
+            # Modify small.py (< 100 changed lines -> split) and large.py (>= 100 changed lines -> unified)
+            (repo / "small.py").write_text("\n".join(f"x_{i} = {i}" for i in range(15)) + "\n", encoding="utf-8")
+            (repo / "large.py").write_text("\n".join(f"y_{i} = {i}" for i in range(110)) + "\n", encoding="utf-8")
+
+            diff_html = self.odin_state.generate_contextual_diff_html(str(repo))
+            self.assertIn('data-view-mode="auto" data-unified-threshold="100"', diff_html)
+            self.assertIn('data-mode-btn="auto"', diff_html)
+            self.assertIn('data-file-path="small.py" data-first-line="1" data-view-mode="split" data-default-view-mode="split" data-changed-lines="16"', diff_html)
+            self.assertIn('data-file-path="large.py" data-first-line="1" data-view-mode="unified" data-default-view-mode="unified" data-changed-lines="111"', diff_html)
+            self.assertIn('data-odin-toggle-file-mode="small.py" data-view-mode="split"', diff_html)
+            self.assertIn('data-odin-toggle-file-mode="large.py" data-view-mode="unified"', diff_html)
+            self.assertIn("☰ Unified (111 lines)", diff_html)
+
+        # Verify retroactive upgrade of legacy <details class="odin-diff-file-card"> blocks
+        legacy_diff_html = (
+            '<!DOCTYPE html><html><head></head><body>'
+            '<div class="odin-diff-viewer" data-view-mode="split">'
+            '<details class="odin-diff-file-card" open data-file-path="a.py"><summary>'
+            '<div class="odin-diff-file-summary-inner"><div class="odin-diff-file-meta">'
+            '<span class="odin-diff-stat-add">+19</span><span class="odin-diff-stat-del">-0</span>'
+            '</div><div class="odin-diff-file-meta">'
+            '<button type="button" data-odin-approve-file="a.py">☑️ Approve File</button>'
+            '</div></div></summary></details>'
+            '<details class="odin-diff-file-card" open data-file-path="b.py"><summary>'
+            '<div class="odin-diff-file-summary-inner"><div class="odin-diff-file-meta">'
+            '<span class="odin-diff-stat-add">+80</span><span class="odin-diff-stat-del">-25</span>'
+            '</div><div class="odin-diff-file-meta">'
+            '<button type="button" data-odin-approve-file="b.py">☑️ Approve File</button>'
+            '</div></div></summary></details>'
+            '</div></body></html>'
+        )
+        upgraded = self.odin_state.ensure_diff_styles(legacy_diff_html)
+        self.assertIn('data-file-path="a.py" data-view-mode="split" data-default-view-mode="split" data-changed-lines="19"', upgraded)
+        self.assertIn('data-file-path="b.py" data-view-mode="unified" data-default-view-mode="unified" data-changed-lines="105"', upgraded)
+        self.assertIn('data-odin-toggle-file-mode="b.py" data-view-mode="unified"', upgraded)
+
+    def test_huginn_plan_table_wrapping_and_phase_body_enclosure(self):
+        light_styles = self.odin_state.ODIN_LIGHT_THEME_STYLES
+        self.assertIn("details.odin-iteration-card > .odin-iteration-body", light_styles)
+        self.assertIn("table:not(.odin-diff-split-table):not(.odin-diff-unified-table) th", light_styles)
+        self.assertIn("overflow-wrap: anywhere;", light_styles)
+        self.assertIn('html[data-theme="light"] :not(pre) > code', light_styles)
+
+        tpl_path = Path(__file__).resolve().parent.parent / "skills" / "odin" / "references" / "state-template.html"
+        tpl = tpl_path.read_text(encoding="utf-8")
+        self.assertIn("details.odin-iteration-card > .odin-iteration-body", tpl)
+        self.assertIn(":not(pre) > code", tpl)
+
+        sample = (
+            '<section id="huginn-plan" data-status="awaiting_human">\n'
+            '  <div class="phase-header"><h2>Phase 1</h2></div>\n'
+            '  <div class="phase-body">\n'
+            '    <!-- Plan, Test Strategy, DoD, Subagent Matrix -->\n'
+            '  </div>\n'
+            '  <details class="odin-iteration-card" data-iteration="1" open>\n'
+            '    <summary><span>Iteration 1</span></summary>\n'
+            '    <div class="odin-iteration-body"><table><tr><td><code>long/path</code></td></tr></table></div>\n'
+            '  </details>\n'
+            '</section>'
+        )
+        wrapped = self.odin_state._ensure_huginn_phase_body(sample)
+        self.assertEqual(wrapped.count('class="phase-body"'), 1)
+        pb_idx = wrapped.index('class="phase-body"')
+        card_idx = wrapped.index('class="odin-iteration-card"')
+        self.assertLess(pb_idx, card_idx)
+
+    def test_mutate_section_body_with_leading_style_block(self):
+        html_with_leading_style = (
+            '<section id="huginn-plan" data-status="active">\n'
+            '  <style data-odin-plan-readability>.plan-card { padding: 1rem; }</style>\n'
+            '  <div class="phase-header"><h2 class="phase-title">Phase 1: Huginn</h2></div>\n'
+            '  <div class="phase-body"><p>Initial placeholder plan</p></div>\n'
+            '</section>'
+        )
+        updated = self.odin_state.mutate_section_body(
+            html_with_leading_style,
+            "huginn-plan",
+            lambda _body: '\n  <div class="phase-body"><p>Finalized implementation blueprint</p></div>\n',
+        )
+        self.assertIn("data-odin-plan-readability", updated)
+        self.assertIn("Finalized implementation blueprint", updated)
+        self.assertNotIn("Initial placeholder plan", updated)
+
+    def test_sync_parent_mimir_delta_on_completion_marks_bundled_deltas_applied(self):
+        parent_html = self.sample_html_path.read_text(encoding="utf-8")
+        parent_ledger = self.odin_state.extract_ledger(parent_html, str(self.sample_html_path))
+        child_rel = "odin-states/mimir-delta-bundle-01.html"
+        parent_ledger["iterations"][0]["harness_delta_proposals"] = [
+            {
+                "id": "delta-bundle-01",
+                "iteration": 1,
+                "repo": "odin",
+                "target_file": "skills/odin/scripts/odin-state.py",
+                "priority": "p1",
+                "category": "workflow",
+                "root_cause": "Primary delta proposal",
+                "proposed_diff": "diff 1",
+                "status": "in_progress",
+                "spawned_ticket_id": child_rel,
+            },
+            {
+                "id": "delta-bundle-02",
+                "iteration": 1,
+                "repo": "odin",
+                "target_file": "skills/odin/resources/dashboard.html",
+                "priority": "p1",
+                "category": "workflow",
+                "root_cause": "Bundled sibling delta sharing spawned_ticket_id",
+                "proposed_diff": "diff 2",
+                "status": "in_progress",
+                "spawned_ticket_id": child_rel,
+            },
+            {
+                "id": "delta-dismissed-03",
+                "iteration": 1,
+                "repo": "odin",
+                "target_file": "SKILL.md",
+                "priority": "p2",
+                "category": "workflow",
+                "root_cause": "Dismissed delta",
+                "proposed_diff": "diff 3",
+                "status": "dismissed",
+            },
+        ]
+        parent_html = self.odin_state.save_ledger_into_html(parent_html, parent_ledger)
+        self.sample_html_path.write_text(parent_html, encoding="utf-8")
+
+        child_path = self.states_dir / "mimir-delta-bundle-01.html"
+        child_html = self.odin_state._build_child_delta_ticket_html(
+            child_slug="mimir-delta-bundle-01",
+            title="Bundled Delta Ticket",
+            worktree_dir="/tmp/odin",
+            session_id="",
+            delta_id="delta-bundle-01",
+            parent_rel=f"odin-states/{self.sample_html_path.name}",
+            plan_html="<p>Plan</p>",
+            repo_name="odin",
+        )
+        child_ledger = self.odin_state.extract_ledger(child_html, str(child_path))
+        child_ledger["mimir_delta_origin"] = {
+            "delta_id": "delta-bundle-01",
+            "parent_state_file": str(self.sample_html_path),
+        }
+        child_html = self.odin_state.save_ledger_into_html(child_html, child_ledger)
+        child_path.write_text(child_html, encoding="utf-8")
+
+        old_root = self.odin_state.AI_DEV_ROOT
+        try:
+            self.odin_state.AI_DEV_ROOT = self.tmp.name
+            res = self.odin_state.sync_parent_mimir_delta_on_completion(
+                child_path,
+                child_html,
+                child_ledger,
+            )
+        finally:
+            self.odin_state.AI_DEV_ROOT = old_root
+
+        self.assertIsNotNone(res)
+        self.assertTrue(res["updatedParent"])
+        self.assertIn("delta-bundle-01", res["deltaIds"])
+        self.assertIn("delta-bundle-02", res["deltaIds"])
+
+        after_html = self.sample_html_path.read_text(encoding="utf-8")
+        after_ledger = self.odin_state.extract_ledger(after_html, str(self.sample_html_path))
+        by_id = {d["id"]: d for d in self.odin_state._collect_all_deltas(after_ledger)}
+        self.assertEqual(by_id["delta-bundle-01"]["status"], "applied")
+        self.assertEqual(by_id["delta-bundle-02"]["status"], "applied")
+        self.assertEqual(by_id["delta-dismissed-03"]["status"], "dismissed")
+        self.assertIn("✅ 2 APPLIED • 🚫 1 DISMISSED", after_html)
+
+    def test_heimdall_prompt_summary_curator_and_wakeup_event(self):
+        import io
+        from contextlib import redirect_stdout
+
+        args = self.odin_state.build_parser().parse_args(
+            [
+                "update-phase",
+                "--file",
+                str(self.sample_html_path),
+                "--phase",
+                "heimdall",
+                "--status",
+                "awaiting_human",
+                "--summary",
+                "Ready for Pre-PR Gate",
+                "--prompt-summary-item",
+                "Bullet A: Disable verbatim prompt dumps by default",
+                "--prompt-summary-item",
+                "Bullet B: Add interactive Heimdall prompt summary curation UI",
+            ]
+        )
+        self.assertEqual(self.odin_state.run_command(args), 0)
+
+        html_out = self.sample_html_path.read_text(encoding="utf-8")
+        ledger = self.odin_state.extract_ledger(html_out, str(self.sample_html_path))
+        expected_bullets = [
+            "Bullet A: Disable verbatim prompt dumps by default",
+            "Bullet B: Add interactive Heimdall prompt summary curation UI",
+        ]
+        self.assertEqual(ledger.get("prompt_summary_candidates"), expected_bullets)
+        self.assertEqual(
+            ledger["iterations"][-1]["phases"]["heimdall"].get("prompt_summary_candidates"),
+            expected_bullets,
+        )
+
+        self.assertIn('id="odin-heimdall-gate-banner"', html_out)
+        self.assertIn("data-odin-prompt-summary-curator", html_out)
+        self.assertIn("data-odin-prompt-summary-list", html_out)
+        self.assertIn("data-odin-prompt-summary-row", html_out)
+        self.assertIn('value="Bullet A: Disable verbatim prompt dumps by default"', html_out)
+        self.assertIn('value="Bullet B: Add interactive Heimdall prompt summary curation UI"', html_out)
+        self.assertIn('data-odin-summary-action="add-item"', html_out)
+        self.assertIn('data-odin-summary-action="remove-item"', html_out)
+        self.assertIn(
+            '#odin-heimdall-gate-banner:hover, #odin-heimdall-gate-banner:focus-within',
+            self.odin_state.ODIN_SAFE_POLLER_FN,
+        )
+
+        # Verify write_wakeup_event & cmd_wait_for_human include approvedPromptSummary
+        approved = [
+            "Curated Bullet 1: Disable verbatim prompt dumps",
+            "Curated Bullet 2: Curate prompt summary in Heimdall",
+        ]
+        wf = self.odin_state.write_wakeup_event(
+            self.sample_html_path,
+            decision="approve_pr",
+            phase="heimdall-validation",
+            notes="Looks great, open PR",
+            selected_skills=["/code-review"],
+            approved_prompt_summary=approved,
+        )
+        wf_data = json.loads(wf.read_text(encoding="utf-8"))
+        self.assertEqual(wf_data["approvedPromptSummary"], approved)
+
+        wfh_args = argparse.Namespace(
+            html_file=str(self.sample_html_path),
+            file=str(self.sample_html_path),
+            phase="heimdall-validation",
+            session_id="test-session-heimdall",
+            timeout=2.0,
+            poll_interval=0.05,
+            consume_existing=True,
+        )
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = self.odin_state.cmd_wait_for_human(wfh_args)
+        self.assertEqual(rc, 0)
+        stdout_txt = buf.getvalue()
+        self.assertIn("📝 Approved PR Prompt Summary (use for ### Prompt Summary):", stdout_txt)
+        self.assertIn("1. Curated Bullet 1: Disable verbatim prompt dumps", stdout_txt)
+        self.assertIn("2. Curated Bullet 2: Curate prompt summary in Heimdall", stdout_txt)
+
 
 if __name__ == "__main__":
     unittest.main()

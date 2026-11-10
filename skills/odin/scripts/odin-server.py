@@ -2065,6 +2065,10 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                 decision = (body.get("decision") or "approve_pr").strip()
                 human_note = (body.get("humanNote") or "").strip()
                 selected_skills = [str(s).strip() for s in (body.get("selectedSkills") or []) if str(s).strip()]
+                has_explicit_summary = "approvedPromptSummary" in body and isinstance(body.get("approvedPromptSummary"), list)
+                approved_prompt_summary = [
+                    str(s).strip() for s in (body.get("approvedPromptSummary") or []) if str(s).strip()
+                ]
 
                 if decision == "reject_pr":
                     # Invoke step-back CLI logic via odin-state.py
@@ -2087,12 +2091,18 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                         content = f.read()
                     content = update_section_in_html(content, "heimdall-validation", "done", human_note)
                     ledger = mod.extract_ledger(content, filepath)
+                    if not has_explicit_summary:
+                        fallback_cands = ledger.get("prompt_summary_candidates")
+                        if isinstance(fallback_cands, list) and fallback_cands:
+                            approved_prompt_summary = [str(s).strip() for s in fallback_cands if str(s).strip()]
                     if selected_skills:
                         ledger["selected_skills"] = selected_skills
+                    ledger["approved_prompt_summary"] = approved_prompt_summary
                     if isinstance(ledger.get("iterations"), list) and ledger["iterations"]:
                         active_entry = ledger["iterations"][-1]
                         h_obj = active_entry.setdefault("phases", {}).setdefault("heimdall", {})
                         h_obj["status"] = "done"
+                        h_obj["approved_prompt_summary"] = approved_prompt_summary
                         if human_note:
                             h_obj["summary"] = human_note
                     content = mod.save_ledger_into_html(content, ledger)
@@ -2106,6 +2116,7 @@ class OdinHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                     phase="heimdall-validation",
                     notes=human_note,
                     selected_skills=selected_skills,
+                    approved_prompt_summary=approved_prompt_summary,
                 )
                 return self.send_json({
                     "ok": True,
