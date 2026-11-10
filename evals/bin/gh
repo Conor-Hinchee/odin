@@ -1,0 +1,9 @@
+#!/bin/sh
+# Fake gh for eval sandboxes: records calls, fakes PR creation.
+echo "$(date -u +%FT%TZ) gh $*" >> "${ODIN_EVAL_GH_LOG:-/dev/null}"
+case "$1 $2" in
+  "pr create") echo "https://github.example/eval/sandbox/pull/1" ;;
+  "pr view") echo '{"url":"https://github.example/eval/sandbox/pull/1","state":"OPEN"}' ;;
+  *) echo "" ;;
+esac
+exit 0
