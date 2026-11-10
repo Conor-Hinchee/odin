@@ -2787,6 +2787,37 @@ def mutate_section_body(content: str, sec_id: str, mutator_fn) -> str:
     return content[: match.start()] + prefix + new_body + suffix + content[match.end() :]
 
 
+def _existing_diff_annotations(content: str, sec_id: str, iteration: int) -> tuple[str, dict[str, str]]:
+    """Rationale and per-file notes already rendered on this iteration card's diff viewer, if any.
+
+    Re-rendering the diff (for example `--status done --with-diff --pr-url` after the pre-PR gate) must not
+    wipe the rationale and notes the human reviewed and approved.
+    """
+    found: list[str] = []
+    mutate_section_body(content, sec_id, lambda body: found.append(body) or body)
+    if not found:
+        return "", {}
+    body = found[0]
+    span = _find_iteration_card(body, iteration)
+    scope = body[span[0]:span[1]] if span else ""
+    tags = re.findall(r'<div\b[^>]*\bclass=["\'][^"\']*odin-diff-viewer[^"\']*["\'][^>]*>', scope, re.IGNORECASE)
+    if not tags:
+        return "", {}
+    tag = tags[0]
+    rat_m = re.search(r'\bdata-rationale=["\']([^"\']*)["\']', tag, re.IGNORECASE)
+    rationale = html_mod.unescape(rat_m.group(1)) if rat_m else ""
+    notes: dict[str, str] = {}
+    fn_m = re.search(r'\bdata-file-notes=["\']([^"\']*)["\']', tag, re.IGNORECASE)
+    if fn_m:
+        try:
+            parsed = json.loads(html_mod.unescape(fn_m.group(1)))
+            if isinstance(parsed, dict):
+                notes = {str(k): str(v) for k, v in parsed.items()}
+        except (ValueError, TypeError):
+            pass
+    return rationale, notes
+
+
 def _find_iteration_card(body: str, iteration: int) -> tuple[int, int] | None:
     open_card_re = re.compile(
         rf'<details\b[^>]*\bclass=["\'][^"\']*odin-iteration-card[^"\']*["\'][^>]*\bdata-iteration=["\']{iteration}["\'][^>]*>',
@@ -4423,12 +4454,17 @@ def cmd_update_phase(args: argparse.Namespace) -> int:
             repo_dirs = [_resolve_worktree_from_html(content, None)]
 
         file_notes = _parse_file_notes(getattr(args, "file_note", None))
+        rationale = getattr(args, "diff_rationale", "") or ""
+        # Keep what the human reviewed: a re-render without new annotations reuses the card's existing ones.
+        prev_rationale, prev_notes = _existing_diff_annotations(content, sec_id, target_iter)
+        rationale = rationale or prev_rationale
+        file_notes = {**prev_notes, **file_notes}
         diff_blocks = []
         for idx, worktree_dir in enumerate(repo_dirs):
             diff_html = generate_contextual_diff_html(
                 worktree_dir=worktree_dir,
                 context_lines=int(getattr(args, "diff_context", 12) or 12),
-                rationale=(getattr(args, "diff_rationale", "") or "") if idx == 0 else "",
+                rationale=rationale if idx == 0 else "",
                 file_notes=file_notes,
                 files_filter=files_list or None,
                 show_pre_pr_banner=(phase_key == "heimdall" and args.status == "awaiting_human" and idx == 0),

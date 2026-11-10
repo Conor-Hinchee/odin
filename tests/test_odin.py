@@ -849,6 +849,49 @@ class TestOdin(unittest.TestCase):
             self.assertNotIn("SUPER_SECRET_VALUE", diff_html)
             self.assertNotIn("untracked_note.txt", diff_html)
 
+    def test_pr_rerender_keeps_reviewed_rationale_and_file_notes(self):
+        """The `--status done --with-diff --pr-url` re-render after the pre-PR gate must not wipe what was reviewed."""
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            for cmd in (["git", "init", "-b", "main"], ["git", "config", "user.name", "T"],
+                        ["git", "config", "user.email", "t@example.com"]):
+                subprocess.run(cmd, cwd=str(repo), check=True, capture_output=True)
+            (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
+            subprocess.run(["git", "add", "app.py"], cwd=str(repo), check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), check=True, capture_output=True)
+            (repo / "app.py").write_text("x = 2\n", encoding="utf-8")
+
+            def phase(*extra):
+                args = self.odin_state.build_parser().parse_args(
+                    ["update-phase", "--file", str(self.sample_html_path), "--phase", "heimdall",
+                     "--with-diff", "--repo-dir", str(repo), *extra])
+                self.assertEqual(self.odin_state.run_command(args), 0)
+                return self.sample_html_path.read_text(encoding="utf-8")
+
+            gate = phase("--status", "awaiting_human", "--summary", "Review the diff",
+                         "--diff-rationale", "Bump x to 2 for the new default",
+                         "--file-note", "app.py=default changed")
+            self.assertIn("Bump x to 2 for the new default", gate)
+
+            subprocess.run(["git", "checkout", "-b", "feat/x"], cwd=str(repo), check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-am", "bump"], cwd=str(repo), check=True, capture_output=True)
+            done = phase("--status", "done", "--summary", "PR linked", "--pr-url", "https://github.com/o/r/pull/1")
+            self.assertIn("Pull Request Open", done)
+            self.assertIn("odin-diff-rationale-banner\">", done)
+            self.assertIn("Bump x to 2 for the new default", done)
+            self.assertIn("default changed", done)
+
+            # An explicit new rationale still wins, and new notes merge over old ones.
+            again = phase("--status", "done", "--diff-rationale", "Revised rationale",
+                          "--file-note", "app.py=revised note")
+            self.assertIn("Revised rationale", again)
+            self.assertNotIn("Bump x to 2 for the new default", again)
+            self.assertIn("revised note", again)
+            self.assertNotIn("default changed", again)
+
     def test_session_telemetry_ignores_collapsed_iteration_awaiting_human_when_done(self):
         done_html = """<!DOCTYPE html>
 <html>
