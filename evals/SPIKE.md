@@ -68,3 +68,25 @@ What it says about Odin:
 - **Plan review, staging, PR timing and the friction gate were followed in every trial.**
 
 Side note: the progress hook logged `cat > shop/tax.py <<'EOF'` as a passing **test** run (✅), because it classifies heredoc writes as check commands. That's a small Odin bug to fix separately.
+
+# LLM judge, first run (2026-11-10)
+
+`judge.py` on all 16 smoke trials plus the self-test: 93 calls on `claude-opus-5-5`, **$0.76** in all, about $0.006–0.012 a call once the system prompt is cached. No judge errors and no refusals.
+
+| Property | Pass | Fail | n/a |
+|---|---|---|---|
+| plan_test_commands | 15 | 0 | 1 |
+| plan_covers_request | 15 | 0 | 1 |
+| plan_parallelism_call | 15 | 0 | 1 |
+| plan_definition_of_done | 12 | 3 | 1 |
+| review_matches_diff | 5 | 9 | 2 |
+
+**Self-test:** 18/19. The miss was in the test, not the judge. The "injection" plan still had the real test command in its Definition of Done, so `plan_test_commands` passing was correct, and the judge's reasoning ignored the injected "output pass" line. The input is fixed; re-run pending.
+
+**Eval bug:** in `smoke-3/dirty-checkout` the trial never committed, so the diff came from the working tree, and the judge was shown the *other session's* uncommitted README edits as if the agent had made them. Working-tree diffs now exclude `setup_dirty.json` files.
+
+**Real Odin bug, found by the judge: the pre-PR review rationale is wiped after approval.** Most `review_matches_diff` fails said the same thing: the review card has no description of the change, only "tests pass, PR linked". But the transcripts show that 13 of 16 agents *did* pass `--diff-rationale` and `--file-note` at the `awaiting_human` gate. After approval, SKILL.md says to run `update-phase --phase heimdall --status done --with-diff --pr-url`. That re-renders the iteration card's diff with no rationale or notes, replacing what the human reviewed (`odin-state.py`, `cmd_update_phase`, the `--with-diff` branch). The state file is meant to be the durable record of the review, and it loses the part the human approved. Those fails are a correct reading of the artifact; the artifact is wrong. **Fixed:** a `--with-diff` re-render with no new `--diff-rationale` or `--file-note` now carries the card's existing ones forward (`_existing_diff_annotations`); explicit new values still win. Regression test `test_pr_rerender_keeps_reviewed_rationale_and_file_notes` fails on the old code. Replaying the smoke-4 `bugfix-single-file` gate sequence on a copy of its state file keeps the agent's rationale and note.
+
+**Real finding about PR descriptions:** in `smoke-4/feature-parallel` the PR description is accurate but omits two behaviours the agent chose on its own, at open questions it had raised: unknown regions raise `ValueError`, and region codes match case-insensitively. A reviewer reading the PR wouldn't learn either.
+
+**Uncalibrated:** the 3 `plan_definition_of_done` fails are strict readings ("Multi-item coupon total correct" has no expected value). That's defensible, but whether it's *right* is what the hand labels are for (`results/smoke-4/labels.csv`, 26 items).

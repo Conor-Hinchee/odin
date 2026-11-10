@@ -1,6 +1,6 @@
 # Odin eval harness: plan
 
-Status: milestones 0–3 done, plus the outcome grader and the protocol checker (see [SPIKE.md](SPIKE.md) and [README.md](README.md)). Next: the LLM judge (milestone 4), then the first experiment. Branch `feat/eval-harness` (worktree `../odin-evals`).
+Status: milestones 0–3 done, plus the outcome grader, the protocol checker and the LLM judge (built and unit-tested offline; not yet run against the API or calibrated). Next: self-test and calibrate the judge, then the first experiment. See [SPIKE.md](SPIKE.md) and [README.md](README.md). Branch `feat/eval-harness` (worktree `../odin-evals`).
 
 ## The question this answers
 
@@ -39,7 +39,7 @@ evals/
   results/<run-id>/        gitignored: results.jsonl, errors.jsonl, transcripts, state files
 ```
 
-No new dependencies for the plugin itself. Only `grade/judge.py` needs `anthropic`, installed in a venv under `evals/`.
+No new dependencies for the plugin itself. Only `evals/judge.py` needs `anthropic`, installed in a venv under `evals/`.
 
 ## 1. Cases
 
@@ -102,12 +102,14 @@ Three layers, recorded as separate metrics, never blended into one score.
 - Valkyries edited only their files and never committed
 - Hlidskjalf recorded a delta or waiver whenever an incident or failed check was logged
 
-**Judge (Claude API, for what a check can't see).** `grade/judge.py`, `anthropic` Python SDK, `claude-opus-5-5`, structured output via `client.messages.parse()` against a Pydantic schema, server-side `fallbacks` enabled. One call per property, not one holistic score:
+**Judge (Claude API, for what a check can't see).** `evals/judge.py`, `anthropic` Python SDK, `claude-opus-5-5`, structured output via `client.messages.parse()` against a Pydantic schema, server-side `fallbacks` enabled. One call per property, not one holistic score:
 - *Plan:* are the test commands real and runnable here? Is the Definition of Done checkable? Is the parallelism call right for this repo?
 - *Delta:* does `--target-path` point at a real source file? Is the failure pattern general (no task names or code)? Would the proposed change have prevented this miss?
 - *Diff review:* do the rationale and per-file notes match what the diff actually does?
 
-Judge hygiene: the rubric is fixed and cached with prompt caching (stable system prompt first, the artifact last); candidate text is treated as untrusted data; the judge never sees which variant produced the artifact. Because the model under test is also Claude, self-preference is a real risk, so the judge only grades properties with a checkable answer, never "which run is better". Calibrate on about 30 plans and deltas labelled by hand; don't let a judge metric steer decisions below about 90% agreement. Re-grading is async and cheap, so it can use the Batches API (half price).
+Judge hygiene: the rubric is fixed and cached with prompt caching (stable system prompt first, the artifact last); candidate text is treated as untrusted data; the judge never sees which variant produced the artifact. Because the model under test is also Claude, self-preference is a real risk, so the judge only grades properties with a checkable answer, never "which run is better". Calibrate on about 30 plans and deltas labelled by hand; don't let a judge metric steer decisions below about 90% agreement. Calls are synchronous, not batched: the Batches API rejects server-side `fallbacks`, and with results cached by input hash a re-grade only pays for new inputs anyway.
+
+*As built (`evals/judge.py`):* five properties, `plan_test_commands`, `plan_definition_of_done`, `plan_covers_request`, `plan_parallelism_call` and `review_matches_diff`. The review artifact is the Heimdall card text plus the PR description the agent wrote (from the fake `gh` log), judged against the real `git diff`. Delta properties wait until a run produces a harness delta (none of the smoke runs did).
 
 **Before the first paid run:** an oracle (apply the reference fix, all graders should pass) and a null (empty diff, graders should fail), plus three known-bad inputs for the judge (empty, "I don't know", a confident answer to the wrong question). These go in `evals/tests/` and run with the normal `python3 -m unittest discover`.
 

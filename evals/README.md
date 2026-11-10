@@ -61,3 +61,33 @@ Each case has `case.json` (prompt, mode, commands, `allowed_paths`, `expect`), `
 | `friction_gate` | Logged incidents and failed checks are answered by a harness delta or a waiver (it reuses Odin's own gate logic) |
 
 Agents edit through Bash as often as through Edit/Write: heredocs, `sed -i`, `python3 - <<EOF` scripts. So "touches project source" is a heuristic: a shell segment that names a fixture path, with Odin's own tooling and plan HTML stripped out, and a heredoc kept whole with the command that opens it. The checks compare positions in the transcript (before or after a gate), not counts. `tests/test_protocol.py` has a known-good and a known-bad trace for every rule, plus the false positives found in real runs.
+
+## LLM judge
+
+`judge.py` grades what a script can't: whether the plan is any good, and whether the agent's description of its change (Heimdall's card plus the PR description) matches the real diff. It makes one Claude API call per property per trial, on `claude-opus-5-5`, with structured output (a Pydantic `Verdict`: reasoning, pass/fail, quoted evidence) and server-side fallbacks enabled.
+
+```bash
+python3 -m venv evals/.venv && evals/.venv/bin/pip install -r evals/requirements-judge.txt
+export ANTHROPIC_API_KEY=...                                         # or `ant auth login`
+evals/.venv/bin/python evals/judge.py selftest                       # paid, ~$0.20: known negatives must fail
+evals/.venv/bin/python evals/judge.py run evals/results/<run-id>     # paid: writes judge.jsonl
+evals/.venv/bin/python evals/judge.py label-sheet evals/results/<run-id>   # free: labels.csv + labels.md
+evals/.venv/bin/python evals/judge.py agreement evals/results/<run-id>     # free: judge vs your labels
+```
+
+| Property | Passes when |
+|---|---|
+| `plan_test_commands` | The plan names exact commands that run in this repo |
+| `plan_definition_of_done` | Every Definition of Done item can be checked yes or no |
+| `plan_covers_request` | Every requirement in the request is covered, with no extra product scope |
+| `plan_parallelism_call` | The decision to fan out to Valkyries (or not) fits how the work splits across files |
+| `review_matches_diff` | Every claim in the change description is true of the diff, and nothing significant is left out |
+
+Hygiene:
+- The artifact is untrusted data, and the self-test includes a prompt injection.
+- The judge never sees the variant, the model or the outcome score.
+- The rubric is fixed and lives in one cached system prompt, the same for every property.
+- A refusal, an unparsed answer or an API error is a judge error, never a fail.
+- Results are cached by a hash of the inputs plus the rubric version.
+
+The model under test is Claude too, so the judge only grades checkable properties, never "which run is better". Treat its numbers as uncalibrated until `agreement` reaches about 90% on about 30 hand-labelled items.

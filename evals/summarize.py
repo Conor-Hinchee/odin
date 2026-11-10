@@ -101,6 +101,23 @@ def summarize(run_dir: Path) -> str:
                 lines.append(f"- `{r['case']}/{r['mode']}/r{r['rep']}` {name}: "
                              f"{r['protocol']['checks'][name]['detail'][:160]}")
 
+    judged = read_jsonl(run_dir / "judge.jsonl")
+    if judged:
+        lines += ["", "## Judge (Claude API, one property per call)", "",
+                  "| Property | Pass | Fail | n/a | Judge errors |", "|---|---|---|---|---|"]
+        for prop in sorted({j["property"] for j in judged}):
+            js = [j for j in judged if j["property"] == prop]
+            v = Counter(j.get("verdict") if j.get("status") == "ok" else j.get("status") for j in js)
+            lines.append(f"| {prop} | {v['pass']} | {v['fail']} | {v['n/a']} | {v['error']} |")
+        spend = sum(j.get("cost_usd") or 0 for j in judged)
+        lines += ["", f"Judge cost: ${spend:.2f} (`{judged[0].get('rubric_version', '?')}` rubric). "
+                  "Uncalibrated until `judge.py agreement` reaches about 90% against hand labels."]
+        fails = [j for j in judged if j.get("verdict") == "fail"]
+        if fails:
+            lines += ["", "Judge fails:", ""]
+            for j in fails:
+                lines.append(f"- `{j['case']}/{j['mode']}/r{j['rep']}` {j['property']}: {j.get('evidence', '')[:160]!r}")
+
     unfinished = [r for r in rows if "finished" in r and not r["finished"]]
     if unfinished:
         lines += ["", "## Didn't finish the loop", ""]
