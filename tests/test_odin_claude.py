@@ -235,6 +235,27 @@ class TestPrHook(unittest.TestCase):
         self.assertEqual(hso["permissionDecision"], "deny")
         self.assertIn("Prompt Summary", hso["permissionDecisionReason"])
 
+    def test_denies_body_that_is_only_the_prompt_summary(self):
+        """Eval finding: Odin PR bodies that were only the Prompt Summary told a reviewer nothing."""
+        self.hook.configure({"label": "ai-generated"})
+        for body in ("### Prompt Summary\n- fix the coupon",
+                     "## Summary\n\n### Prompt Summary\n- fix it\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)"):
+            with self.subTest(body=body):
+                out = self.hook.handle_pre_tool_use(self.payload(f'gh pr create --title t --body "{body}"'))
+                hso = out["hookSpecificOutput"]
+                self.assertEqual(hso["permissionDecision"], "deny")
+                self.assertIn("says nothing about the change", hso["permissionDecisionReason"])
+
+    def test_change_summary_check_can_be_turned_off(self):
+        self.hook.configure({"label": "ai-generated", "require_change_summary": False})
+        out = self.hook.handle_pre_tool_use(self.payload('gh pr create --title t --body "### Prompt Summary\n- fix it"'))
+        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "ask")
+
+    def test_has_change_summary(self):
+        self.assertTrue(self.hook.has_change_summary("Coupon now applies to every item.\n\n### Prompt Summary\n- a"))
+        self.assertTrue(self.hook.has_change_summary("### Prompt Summary\n- a\n\n## Testing\n- 5 tests pass"))
+        self.assertFalse(self.hook.has_change_summary("### Prompt Summary\n- a\n<details><summary>x</summary>y</details>"))
+
     def test_enriches_and_asks(self):
         self.hook.configure({"label": "ai-generated"})
         cmd = 'gh pr create --title "Fix Step #2" --body "## Summary\n- x\n\n### Prompt Summary\n- fix it"'

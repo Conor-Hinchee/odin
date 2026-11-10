@@ -8,7 +8,9 @@ Does nothing unless your Odin config has a "pr" block, e.g.:
 
 When enabled it:
 1. Adds `--label "<label>"` to `gh pr create` (if a label is configured).
-2. Denies `gh pr create` whose `--body` lacks a `### Prompt Summary` section (require_prompt_summary).
+2. Denies `gh pr create` whose `--body` lacks a `### Prompt Summary` section (require_prompt_summary),
+   or says nothing about the change beyond it (require_change_summary). The eval harness found Odin
+   PR bodies that were only the Prompt Summary, so a GitHub reviewer learned nothing about the diff.
 3. Appends a telemetry section with the Session ID, model, and a collapsible
    `<details>` block of the session's verbatim prompts read from the transcript.
 4. Rewrites non-issue `Rule #12`-style references to `Rule 12` in PR titles/bodies and
@@ -32,16 +34,18 @@ PR_CONFIG: dict = {}
 LABEL = ""
 TELEMETRY_HEADING = "## 🤖 Session Telemetry"
 REQUIRE_PROMPT_SUMMARY = True
+REQUIRE_CHANGE_SUMMARY = True
 SANITIZE_HASH_REFS = True
 VERBATIM_SUMMARY_TAG = "<summary>💬 Verbatim Session Prompts"
 
 
 def configure(pr_config: dict | None) -> None:
-    global PR_CONFIG, LABEL, TELEMETRY_HEADING, REQUIRE_PROMPT_SUMMARY, SANITIZE_HASH_REFS
+    global PR_CONFIG, LABEL, TELEMETRY_HEADING, REQUIRE_PROMPT_SUMMARY, REQUIRE_CHANGE_SUMMARY, SANITIZE_HASH_REFS
     PR_CONFIG = pr_config if isinstance(pr_config, dict) else {}
     LABEL = str(PR_CONFIG.get("label") or "")
     TELEMETRY_HEADING = str(PR_CONFIG.get("heading") or "## 🤖 Session Telemetry")
     REQUIRE_PROMPT_SUMMARY = bool(PR_CONFIG.get("require_prompt_summary", True))
+    REQUIRE_CHANGE_SUMMARY = bool(PR_CONFIG.get("require_change_summary", True))
     SANITIZE_HASH_REFS = bool(PR_CONFIG.get("sanitize_hash_refs", True))
 
 
@@ -159,6 +163,18 @@ def has_prompt_summary(body: str) -> bool:
     return bool(
         re.search(r"(?i)(###?\s*Prompt\s+Summary|\*\*Prompt\s+Summary\*\*)", body)
     )
+
+
+def has_change_summary(body: str) -> bool:
+    """Does the body say anything about the change besides the Prompt Summary, telemetry and attribution?"""
+    text = re.sub(r"(?is)<details\b.*?</details>", "", body or "")
+    # Drop the Prompt Summary and telemetry sections, up to the next heading of any level.
+    text = re.sub(r"(?ims)^#{1,4}\s*(Prompt\s+Summary|🤖\s*Session\s+Telemetry|Session\s+Telemetry)\b.*?(?=^#{1,4}\s|\Z)",
+                  "", text)
+    text = re.sub(r"(?im)^\s*\*\*Prompt\s+Summary\*\*.*$", "", text)
+    text = re.sub(r"(?im)^.*(Generated with \[?Claude Code|Co-Authored-By:).*$", "", text)
+    text = re.sub(r"(?m)^\s*#{1,6}\s.*$", "", text)  # headings alone don't describe anything
+    return bool(re.search(r"[A-Za-z0-9]", text))
 
 
 def enrich_pr_body(
@@ -327,6 +343,17 @@ def process_gh_command_tokens(
             continue
         i += 1
 
+    if is_create and REQUIRE_CHANGE_SUMMARY and body_val is not None and not has_change_summary(body_val):
+        return (
+            None,
+            (
+                "The PR body says nothing about the change: add a `## Summary` before the "
+                "`### Prompt Summary` that says what changed and why (behaviour changes, defaults you "
+                "chose for open questions, deleted files or APIs, tests added). Reuse the pre-PR review's "
+                "--diff-rationale and --file-note text. GitHub reviewers can't see the Odin state file."
+            ),
+            False,
+        )
     if is_create and REQUIRE_PROMPT_SUMMARY:
         if body_val is None or not has_prompt_summary(body_val):
             return (
