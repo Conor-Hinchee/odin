@@ -143,6 +143,32 @@ class ProtocolTest(unittest.TestCase):
                          "p='shop/cart.py'\ns=open(p).read()\nopen(p,'w').write(s)\nE\npython3 -m unittest").calls()
         self.assertTrue(P.is_project_write(c[0], TOKENS))
 
+    def test_multiline_plan_html_is_not_an_edit(self):
+        """Exp1: a quoted multi-line --html plan saying "(git rm)" was read as an edit."""
+        c = Trace().bash(f"{ODIN} update-phase --file $F --phase huginn --html '<h3>Plan</h3>\n"
+                         "<li>Delete shop/cart.py and tests/test_cart.py (git rm).</li>\n<p>done</p>'").calls()
+        self.assertFalse(P.is_project_write(c[0], TOKENS))
+        c = Trace().bash("echo 'a;b'\ngit rm shop/cart.py").calls()
+        self.assertTrue(P.is_project_write(c[0], TOKENS))
+
+    def test_chat_nudge_counts_as_approval(self):
+        ev = [{"type": "result"}, {"type": "system", "subtype": "init"}]
+        t = (bootstrap().bash(f"{ODIN} wait-for-human --file $F --phase huginn-plan", bg=True))
+        t.events += ev
+        t.tool("Edit", file_path="/r/shop/cart.py", old_string="a", new_string="b")
+        t.bash(f"{ODIN} update-phase --file $F --phase heimdall --status awaiting_human")
+        t.events += ev
+        t.bash("gh pr create --fill")
+        c = t.calls()
+        self.assertEqual(P.check_no_edits_before_approval(c, TOKENS, {"pause_at_plan": True})["status"], "pass")
+        self.assertEqual(P.check_pr_after_approval(c)["status"], "pass")
+
+    def test_nudge_before_pre_pr_pause_does_not_approve_pr(self):
+        t = bootstrap()
+        t.events += [{"type": "result"}, {"type": "system", "subtype": "init"}]
+        t.bash("gh pr create --fill")
+        self.assertEqual(P.check_pr_after_approval(t.calls())["status"], "fail")
+
     def test_pr_before_gate(self):
         c = bootstrap().bash("gh pr create --fill").calls()
         self.assertEqual(P.check_pr_after_approval(c)["status"], "fail")

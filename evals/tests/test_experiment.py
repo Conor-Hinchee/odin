@@ -80,7 +80,11 @@ class NudgeTest(unittest.TestCase):
         self.assertEqual(R.stalled_gate("gated", self.trial()), "huginn-plan")
         self.assertEqual(R.stalled_gate("gated", self.trial(watcher=True)), "")  # still waiting on the dashboard
         self.assertEqual(R.stalled_gate("plain", self.trial()), "")
-        self.assertEqual(R.stalled_gate("gated", self.trial(STALLED_STATE.replace("awaiting_human", "done"))), "")
+        # Exp1: the dashboard approval already moved the plan to done and Phase 2 to active, then the agent stopped.
+        approved = '<section id="huginn-plan" data-status="done"></section><section id="thor-execution" data-status="active"></section>'
+        self.assertEqual(R.stalled_gate("gated", self.trial(approved)), "thor-execution")
+        signed_off = approved + '<section id="human-validation" data-status="done"></section>'
+        self.assertEqual(R.stalled_gate("gated", self.trial(signed_off)), "")
 
     def test_totals_cost_is_cumulative_turns_add_up(self):
         res = [{"total_cost_usd": 0.18, "num_turns": 3, "usage": {"input_tokens": 10}, "modelUsage": {"claude-sonnet-5-5": {}}},
@@ -117,6 +121,19 @@ class FakeGhTest(unittest.TestCase):
         self.assertEqual(sh("gh", "pr", "view").returncode, 1)  # per branch
 
 
+class IsolationTest(unittest.TestCase):
+    def test_instruction_files_above_a_trial_are_found(self):
+        root = Path(tempfile.mkdtemp())
+        (root / "CLAUDE.md").write_text("repo rules")
+        trial = root / "results" / "run" / "trials" / "c" / "gated" / "r1"
+        trial.mkdir(parents=True)
+        self.assertIn(str((root / "CLAUDE.md").resolve()), R.instructions_above(trial))
+
+    def test_default_results_root_is_outside_this_repo(self):
+        self.assertFalse(str(R.RESULTS_ROOT.resolve()).startswith(str(EVALS.parent.resolve())))
+        self.assertTrue(any("odin-evals/CLAUDE.md" in f or f.endswith("/CLAUDE.md") for f in R.instructions_above(EVALS / "results")))
+
+
 class BlindingTest(unittest.TestCase):
     def test_prompt_summary_and_attribution_are_stripped(self):
         body = ("Coupon now applies to every item.\n\n### Prompt Summary\n- fix the coupon\n- add tests\n\n"
@@ -127,6 +144,7 @@ class BlindingTest(unittest.TestCase):
         self.assertNotIn("Prompt Summary", out)
         self.assertNotIn("fix the coupon", out)
         self.assertNotIn("Generated with", out)
+        self.assertEqual(J.blind_pr_body("Add Cart.remove\n\nCo-Authored-By: Claude <x@y>"), "Add Cart.remove")
 
     def test_summary_at_end(self):
         self.assertEqual(J.blind_pr_body("Did X.\n\n### Prompt Summary\n- a"), "Did X.")

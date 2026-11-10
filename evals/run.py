@@ -35,6 +35,10 @@ import protocol  # noqa: E402
 REPO_ROOT = EVALS.parent
 CASES_DIR = EVALS / "cases"
 DEFAULT_MODEL = "claude-sonnet-5-5"
+# Trials run outside this repo. Claude Code reads CLAUDE.md from every parent directory, so a sandbox under
+# evals/results/ inherited Odin's own repo instructions (Exp1 finding: half the plain transcripts quoted them).
+RESULTS_ROOT = Path(os.environ.get("ODIN_EVAL_RESULTS") or Path.home() / ".cache" / "odin-evals" / "results")
+INSTRUCTION_FILES = ("CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", ".claude")
 
 WAIVER_SUFFIX = (
     "\n\nEval run, no human available: I waive plan review, so go straight from Phase 1 to "
@@ -52,6 +56,23 @@ MAX_NUDGES = 3
 FAKE_REMOTE = "https://github.com/eval-sandbox/shop.git"
 GIT_ID = ["-c", "user.name=eval", "-c", "user.email=eval@example.invalid"]
 _write_lock = threading.Lock()
+
+
+def instructions_above(path: Path) -> list:
+    """Agent instruction files in any parent directory of a trial (the user's own ~/.claude is handled by
+    --setting-sources and is the same for every arm)."""
+    found, user_dir = [], Path.home() / ".claude"
+    p = path.resolve()
+    for d in [p, *p.parents]:
+        for name in INSTRUCTION_FILES:
+            f = d / name
+            if f.exists() and f != user_dir:
+                found.append(str(f))
+    return found
+
+
+# A real `gh pr create`, not `gh pr create --help` (Exp1: a help call was scored as an opened PR).
+PR_CREATE = re.compile(r"\bgh pr create\b(?!.*(?:\s--help\b|\s-h\b))")
 
 
 def git(repo, *args, check=True):
@@ -106,7 +127,7 @@ def pr_from_gh_log(gh_log: Path) -> tuple:
         return False, ""
     opened, head = False, ""
     for line in gh_log.read_text().splitlines():
-        if " gh pr create" not in line:
+        if not PR_CREATE.search(line):
             continue
         opened = True
         m = re.search(r"\[branch=([^\]]*)\]", line)
@@ -286,12 +307,22 @@ def session_id(events: list) -> str:
     return next((e.get("session_id") for e in events if e.get("type") == "system" and e.get("session_id")), "")
 
 
+PHASE_ORDER = ["huginn-plan", "thor-execution", "heimdall-validation", "hlidskjalf-judge", "human-validation"]
+
+
 def stalled_gate(mode: str, out: Path) -> str:
-    """The gate a finished `claude -p` left at awaiting_human with no watcher armed: Odin is waiting on chat."""
+    """Where a gated `claude -p` stopped early: it exited before sign-off with no watcher armed.
+
+    Then Odin is waiting on chat, whatever the state file says. (Exp1: the dashboard's approval had already
+    moved the plan to done and Phase 2 to active, so the state file showed no awaiting_human at all.)
+    """
     if mode != "gated" or armed_watchers(out):
         return ""
-    waiting = [k for k, v in final_phases(out).items() if v == "awaiting_human"]
-    return waiting[0] if waiting else ""
+    phases = final_phases(out)
+    if phases.get("human-validation") == "done":
+        return ""
+    waiting = [k for k in PHASE_ORDER if phases.get(k) == "awaiting_human"]
+    return waiting[0] if waiting else next((k for k in PHASE_ORDER if phases.get(k) != "done"), "unknown")
 
 
 def totals(results: list) -> dict:
@@ -318,7 +349,7 @@ def totals(results: list) -> dict:
 
 def opened_pr(out: Path) -> bool:
     log = out / "gh.log"
-    return log.exists() and bool(re.search(r"\bgh pr create\b", log.read_text()))
+    return log.exists() and any(PR_CREATE.search(l) for l in log.read_text().splitlines())
 
 
 def loop_status(mode: str, phases: dict, out: Path) -> dict:
@@ -363,9 +394,10 @@ def drive(cmd: list, repo: Path, env: dict, out: Path, transcript: Path, started
     return status, rc
 
 
-def run_trial(case: dict, mode: str, rep: int, args, run_dir: Path) -> tuple:
+def run_trial(case: dict, mode: str, rep: int, args, run_dir: Path, resume: dict | None = None) -> tuple:
+    """One trial. With `resume` (its earlier results row), continue a stalled session in place with a nudge."""
     out = run_dir / "trials" / case["id"] / mode / f"r{rep}"
-    repo = make_sandbox(case, out)
+    repo = out / "repo" if resume else make_sandbox(case, out)
 
     env = dict(os.environ)
     env.pop("ODIN_SESSION_ID", None)
@@ -398,9 +430,17 @@ def run_trial(case: dict, mode: str, rep: int, args, run_dir: Path) -> tuple:
         partner = subprocess.Popen(pcmd, stdout=subprocess.DEVNULL, stderr=open(out / "partner.err", "w"))
 
     transcript = out / "transcript.jsonl"
-    transcript.write_text("")
     started = time.time()
     status, rc, nudges = "completed", None, []
+    prior_wall = 0.0
+    if resume:
+        prior_wall = resume.get("wall_s") or 0.0
+        nudges = list(resume.get("nudges") or [])
+        sid = session_id(read_events(transcript))
+        nudges.append({"gate": stalled_gate(mode, out) or "unknown", "t": prior_wall, "late": True})
+        cmd = resume_cmd(build_cmd(case, mode, args), sid, NUDGE)
+    else:
+        transcript.write_text("")
     while True:
         status, rc = drive(cmd, repo, env, out, transcript, started, args)
         if status != "completed" or len(nudges) >= MAX_NUDGES:
@@ -415,7 +455,7 @@ def run_trial(case: dict, mode: str, rep: int, args, run_dir: Path) -> tuple:
     for p in (partner, server):
         if p:
             p.terminate()
-    wall = round(time.time() - started, 1)
+    wall = round(prior_wall + time.time() - started, 1)
 
     events = read_events(transcript)
     results = [e for e in events if e.get("type") == "result"]
@@ -473,6 +513,40 @@ def append(path: Path, row: dict) -> None:
         f.write(json.dumps(row) + "\n")
 
 
+def resume_stalled(args) -> int:
+    """Continue stalled sessions where they stopped (what the nudge would have done), not fresh re-runs."""
+    run_dir = RESULTS_ROOT / args.resume_stalled
+    path = run_dir / "results.jsonl"
+    rows = [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+    todo = [i for i, r in enumerate(rows)
+            if r["mode"] == "gated" and stalled_gate("gated", run_dir / r["trial_dir"])]
+    print(f"resume {args.resume_stalled}: {len(todo)} stalled trials", flush=True)
+    shutil.copy(path, path.with_suffix(".jsonl.pre-resume"))
+    errors = []
+    with cf.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
+        futs = {pool.submit(run_trial, load_case(rows[i]["case"]), "gated", rows[i]["rep"], args, run_dir, rows[i]): i
+                for i in todo}
+        for fut in cf.as_completed(futs):
+            i = futs[fut]
+            try:
+                kind, row = fut.result()
+            except Exception as exc:
+                kind, row = "error", {**rows[i], "error_class": "harness_error", "detail": repr(exc)}
+            if kind == "result":
+                rows[i] = row
+                g = row["grade"]
+                print(f"  {row['case']}/r{row['rep']}: hidden={'PASS' if g['hidden_pass'] else 'FAIL'} "
+                      f"nudges={len(row['nudges'])} finished={row['finished']} ${row['cost_usd'] or 0:.2f}", flush=True)
+            else:  # an unfinished resume is an error, never a graded fail
+                errors.append(row)
+                print(f"  {rows[i]['case']}/r{rows[i]['rep']}: ERROR {row.get('error_class')}", flush=True)
+                rows[i] = None
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows if r is not None))
+    for e in errors:
+        append(run_dir / "errors.jsonl", e)
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cases", default="all", help="comma-separated case ids, or 'all'")
@@ -485,14 +559,23 @@ def main() -> int:
     ap.add_argument("--jobs", type=int, default=2)
     ap.add_argument("--timeout", type=int, default=1500, help="hard wall-clock ceiling per trial (s)")
     ap.add_argument("--idle-timeout", type=int, default=300, help="kill a trial with no transcript output for this long (s)")
+    ap.add_argument("--resume-stalled", default="", metavar="RUN_ID",
+                    help="nudge every gated trial in RUN_ID that stopped before sign-off, in place, and re-grade it")
     args = ap.parse_args()
     args.odin_dir = str(Path(args.odin_dir).resolve())
+    if args.resume_stalled:
+        return resume_stalled(args)
 
     ids = all_case_ids() if args.cases == "all" else [c.strip() for c in args.cases.split(",") if c.strip()]
     cases = [load_case(i) for i in ids]
     run_id = args.run_id or datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_dir = EVALS / "results" / run_id
+    run_dir = RESULTS_ROOT / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    leaks = instructions_above(run_dir)
+    if leaks:
+        print("refusing to run: agent instructions in a parent of the trial dirs would load into every trial:\n  "
+              + "\n  ".join(leaks) + "\nSet ODIN_EVAL_RESULTS to a directory outside any project.", file=sys.stderr)
+        return 2
     odin_ref = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=args.odin_dir,
                               text=True, capture_output=True).stdout.strip()
     (run_dir / "run.json").write_text(json.dumps({

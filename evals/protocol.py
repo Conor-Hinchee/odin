@@ -39,11 +39,18 @@ def load_calls(transcript: Path) -> list:
 
     Each item: {"i", "kind": "call"|"wakeup", "name", "input", "parent", "text"}.
     """
-    items = []
+    items, seen_result = [], False
     for line in transcript.read_text().splitlines():
         try:
             ev = json.loads(line)
         except json.JSONDecodeError:
+            continue
+        if ev.get("type") == "result":
+            seen_result = True
+        if ev.get("type") == "system" and ev.get("subtype") == "init" and seen_result:
+            # The runner resumed the session with a chat nudge: the user approved in chat.
+            items.append({"kind": "wakeup", "decision": "nudge", "parent": None})
+            seen_result = False
             continue
         parent = ev.get("parent_tool_use_id")
         msg = ev.get("message") or {}
@@ -88,6 +95,42 @@ ODIN_TOOLING = re.compile(r"odin-state\.py|odin-notify\.sh|odin_config\.py|odin-
 HEREDOC = re.compile(r"([^\n]*<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n)(.*?)\n\s*\2\b", re.S)
 
 
+def _split_unquoted(text: str) -> list:
+    """Split on newlines, ;, &&, || and | outside quotes. A quoted multi-line argument (plan HTML passed to
+    `odin-state.py --html '...'`) stays with its command (Exp1: the plan's "(git rm)" line read as an edit)."""
+    out, cur, quote, i = [], [], "", 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == "\\" and quote == '"' and i + 1 < len(text):
+                cur.append(text[i:i + 2])
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+            cur.append(ch)
+        elif ch == "\\" and i + 1 < len(text):
+            cur.append(text[i:i + 2])
+            i += 2
+            continue
+        elif ch in "'\"":
+            quote = ch
+            cur.append(ch)
+        elif ch == "\n" or ch == ";":
+            out.append("".join(cur)); cur = []
+        elif text.startswith("&&", i) or text.startswith("||", i):
+            out.append("".join(cur)); cur = []
+            i += 2
+            continue
+        elif ch == "|":
+            out.append("".join(cur)); cur = []
+        else:
+            cur.append(ch)
+        i += 1
+    out.append("".join(cur))
+    return out
+
+
 def segments(text: str) -> list:
     """Split a shell command into simple commands (newlines, ;, &&, ||, |).
 
@@ -105,7 +148,7 @@ def segments(text: str) -> list:
         return "\n"
 
     rest = HEREDOC.sub(keep, text)
-    units += [seg for seg in re.split(r"\n|;|&&|\|\||\|", rest)]
+    units += _split_unquoted(rest)
     return [u.strip() for u in units if u.strip()]
 
 
@@ -230,7 +273,7 @@ def check_no_edits_before_approval(calls, tokens, expect):
     """No project edits until the plan is approved (when plan review applies)."""
     if not expect.get("pause_at_plan", True):
         return na("plan review waived")
-    approval = next((c["i"] for c in calls if c["kind"] == "wakeup" and c["decision"] == "approve_huginn"), None)
+    approval = next((c["i"] for c in calls if c["kind"] == "wakeup" and c["decision"] in ("approve_huginn", "nudge")), None)
     first_write = next((c for c in calls if c["kind"] == "call" and is_project_write(c, tokens)), None)
     if first_write is None:
         return na("no project edits")
@@ -245,7 +288,11 @@ def check_pr_after_approval(calls):
                and re.search(r"\bgh\s+pr\s+create\b", c["text"])), None)
     if pr is None:
         return na("no PR opened")
-    approval = next((c["i"] for c in calls if c["kind"] == "wakeup" and c["decision"] == "approve_pr"), None)
+    # A chat nudge approves the pre-PR gate when it follows the agent pausing there.
+    paused = next((c["i"] for c in calls if c["kind"] == "call" and re.search(r"heimdall", c["text"])
+                   and re.search(r"awaiting_human|wait-for-human", c["text"])), None)
+    approval = next((c["i"] for c in calls if c["kind"] == "wakeup" and (
+        c["decision"] == "approve_pr" or (c["decision"] == "nudge" and paused is not None and c["i"] > paused))), None)
     if approval is None or pr["i"] < approval:
         return bad("opened the PR before the pre-PR gate was approved")
     return ok()

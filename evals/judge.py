@@ -210,24 +210,44 @@ def review_text(state: str) -> str:
 GH_ENTRY = re.compile(r"^\d{4}-\d\d-\d\dT[\d:]+Z \[branch=[^\]]*\] gh ", re.M)
 
 
-def pr_body(trial: Path) -> str:
-    """The last PR description the agent wrote (gh pr create/edit --body), from the fake gh's log."""
+def pr_description(trial: Path) -> tuple:
+    """(opened, body): whether a PR was really created, and the last description the agent gave it.
+
+    `--body` text comes from the fake gh's log. `--fill` with no body takes the head branch's commit
+    messages, as the real gh does. `--help` calls are not PRs.
+    """
     log = trial / "gh.log"
     if not log.exists():
-        return ""
-    entries = [e for e in GH_ENTRY.split(log.read_text()) if e.strip()]
-    body = ""
-    for e in entries:
+        return False, ""
+    text = log.read_text()
+    heads = [m.group(1) for m in re.finditer(r"\[branch=([^\]]*)\] gh ", text)]
+    entries = [e for e in GH_ENTRY.split(text) if e.strip()]
+    opened, body = False, ""
+    for e, branch in zip(entries, heads):
+        if re.match(r"pr (?:create|edit)\b.*(?:\s--help\b|\s-h\b)", e.splitlines()[0]):
+            continue
+        create = e.startswith("pr create")
+        opened = opened or create
         m = re.match(r"pr (?:create|edit)\b.*?--body[ =]([\s\S]*)", e)
         if m:
             body = re.split(r" --(?:title|base|head|fill)\b", m.group(1))[0].strip()
-    return body
+        elif create and re.search(r"\s--fill\b", e) and not body and (trial / "repo").is_dir():
+            hm = re.search(r"--head[ =](\S+)", e)
+            head = hm.group(1) if hm else branch
+            body = subprocess.run(["git", "log", "--format=%B", f"main..{head}"], cwd=trial / "repo",
+                                  capture_output=True, text=True).stdout.strip()
+    return opened, body
+
+
+def pr_body(trial: Path) -> str:
+    return pr_description(trial)[1]
 
 
 def blind_pr_body(body: str) -> str:
     """Drop what identifies the arm, not what describes the change: Odin's Prompt Summary and attribution lines."""
     body = re.sub(r"(?ms)^#{2,4} Prompt Summary\s*$.*?(?=^#{1,4} |\Z)", "", body)
     body = re.sub(r"(?m)^.*Generated with \[?Claude Code.*$", "", body)
+    body = re.sub(r"(?mi)^\s*Co-Authored-By:.*$", "", body)
     return re.sub(r"\n{3,}", "\n\n", body).strip()
 
 
@@ -265,7 +285,7 @@ def trial_inputs(trial: Path, row: dict, review_source: str = "all") -> dict:
     case = json.loads((CASES_DIR / row["case"] / "case.json").read_text())
     states = state_files(trial)
     state = max((p.read_text() for p in states), key=len, default="")
-    body = pr_body(trial)
+    pr_opened, body = pr_description(trial)
     if review_source == "pr":
         review = ("PR description:\n" + blind_pr_body(body)) if blind_pr_body(body) else ""
     else:
@@ -278,6 +298,7 @@ def trial_inputs(trial: Path, row: dict, review_source: str = "all") -> dict:
         "plan": plan_text(state) if state else "",
         "review": review,
         "diff": trial_diff(trial, (row.get("grade") or {}).get("graded_ref", "")),
+        "pr_opened": pr_opened,
     }
 
 
@@ -317,13 +338,18 @@ def cost_usd(model: str, usage) -> float:
 
 class Judge:
     def __init__(self, client=None, model: str = JUDGE_MODEL, cache_dir: Path | None = None):
-        if client is None:
-            import anthropic
-            client = anthropic.Anthropic()
-        self.client, self.model, self.cache_dir = client, model, cache_dir
+        self._client, self.model, self.cache_dir = client, model, cache_dir
         self.system = system_prompt()
         if cache_dir:
             cache_dir.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def client(self):
+        """Created on the first uncached call, so a fully cached re-grade needs no API key."""
+        if self._client is None:
+            import anthropic
+            self._client = anthropic.Anthropic()
+        return self._client
 
     def _key(self, prop: str, message: str) -> str:
         h = hashlib.sha256("\x00".join([RUBRIC_VERSION, self.model, self.system, prop, message]).encode())
@@ -393,6 +419,15 @@ def cmd_run(args) -> int:
         for prop in props:
             base = {"case": row["case"], "mode": row["mode"], "rep": row["rep"], "property": prop,
                     "rubric_version": RUBRIC_VERSION, "review_source": args.review_source}
+            if (args.review_source == "pr" and prop == "review_matches_diff" and inp.get("pr_opened")
+                    and not inp["review"]):
+                # The rubric's own rule, applied without a call: a PR that says nothing about the change fails.
+                rows_out.append({**base, "status": "ok", "verdict": "fail", "judge_model": "rule", "cost_usd": 0,
+                                 "reasoning": "A PR was opened, but after removing the Prompt Summary and attribution "
+                                              "its description says nothing about the change.",
+                                 "evidence": "(empty description)"})
+                print(f"  {row['case']}/r{row['rep']} {prop}: fail (empty description, by rule)", flush=True)
+                continue
             if not applicable(prop, inp):
                 rows_out.append({**base, "status": "n/a"})
                 continue

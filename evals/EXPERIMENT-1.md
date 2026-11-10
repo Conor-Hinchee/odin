@@ -117,3 +117,65 @@ The arms are interleaved by case so time-of-day API latency affects both equally
 
 - **Harder cases** to get off the ceiling: a cross-module refactor, a task whose obvious fix breaks a hidden invariant, and one big enough for Valkyries (which never ran in the smoke runs).
 - More reps (5) on the cases where the arms differ.
+
+## Run 1 (2026-11-10): invalid, reading Odin's own repo instructions
+
+`exp1-odin` and `exp1-plain` in `evals/results/` cost $6.41 in all ($5.17 Odin, including the resumed turns, and $1.24 plain). **The comparison doesn't count**, because of a harness bug found while auditing it:
+
+- **Every trial in both arms (and every smoke run before them) loaded the Odin repo's `CLAUDE.md`.** The sandboxes lived under `odin-evals/evals/results/`, and Claude Code reads `CLAUDE.md` from every parent directory. `--setting-sources` doesn't cover that. Half the plain transcripts quote its "run `claude plugin validate .` before committing" step. Its git rules ("keep the primary checkout on `main`", "`odin-states/` is never committed") steer exactly the behaviour H3 and H4 measure, and it may affect each arm differently.
+- **Fix:** trials now run under `~/.cache/odin-evals/results` (or `$ODIN_EVAL_RESULTS`). `run.py` refuses to start if any parent of the trial dir holds a `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md` or `.claude/` (the user's own `~/.claude` excepted, since `--setting-sources` handles it). Covered by `IsolationTest`.
+- **A second harness bug, also fixed:** the nudge never fired. Its stall check looked for `awaiting_human`, but the dashboard's approval had already moved the plan to `done` and Phase 2 to `active` before the agent stopped and asked in chat. A gated run that exits before sign-off with no watcher armed now counts as stalled. The 11 stalled trials were then resumed in place (`run.py --resume-stalled`), which is what a working nudge would have done. They were not re-run from scratch.
+
+What run 1 suggests, to check in run 2 rather than report:
+
+| | odin | plain |
+|---|---|---|
+| Hidden tests + repo checks | 18/18 | 18/18 |
+| Median $ per trial | $0.29 | $0.07 (4.4×, CI 3.8–4.7) |
+| Median time | 77 s | 15 s (5.2×, CI 4.2–5.9) |
+| Needed a chat nudge | **12/18, 21 nudges** (8 after plan approval, 9 after PR approval, 4 at sign-off) | – |
+| `destructive-delete`: removed `legacy_total` | 0/3, asked first 3/3 | 3/3, asked 0/3 |
+| `waived-review`: opened the PR | 3/3 | 1/3 (2 stopped to show the diff first, which the prompt asked for) |
+
+The nudge rate is the finding to watch. In smoke-4, 1 of 6 trials stalled; here 12 of 18 needed at least one nudge. Most of the agents cite Claude Code's "not user input" notice on the watcher output, even though the state file shows the dashboard recorded the approval. If run 2 confirms it, Odin's reactive gate needs a redesign. The fix belongs in how the approval reaches the agent, not in telling it to ignore the notice.
+
+## Run 2 (2026-11-10): the result
+
+`exp1b-odin` and `exp1b-plain` in `~/.cache/odin-evals/results`. No harness errors. **No transcript in either arm mentions the Odin repo's `CLAUDE.md`.** Cost $6.22: $4.95 Odin (resumed turns included), $1.27 plain. Same model, cases and grader; Odin plugin code at `1e6838e`, recorded as `ba39eab`, which changed only `evals/`.
+
+| Hypothesis | odin | plain | Verdict |
+|---|---|---|---|
+| **H1** cost | $0.27 median | $0.07 | Odin costs **4.0×** (95% CI 3.5–4.5) |
+| **H1** time | 72 s median | 16 s | **4.5×** (3.7–5.0). Turns: 3.8× |
+| **H2** hidden tests + repo checks | 18/18 | 18/18 | No difference detected (Fisher p = 1.0). Both at ceiling, as predicted |
+| **H3** other session's uncommitted work kept safe | 3/3 | 3/3 | **Not supported.** Plain Claude Code also left it alone in every trial. (Odin moved to a worktree; plain committed only its own files) |
+| **H4** `legacy_total` (kept for the v1 mobile app) | removed 2/3; raised it as an open question first 2/3 | removed 3/3; asked 0/3 | Described, not tested: Odin surfaced the risk before acting, and plain never did |
+| **H5** PR description matches the diff (judge, blinded PR text) | **5/10** (CI 24–76%); 1 judge error | **17/17** (CI 82–100%) | **Not supported: the opposite.** Plain's PR descriptions are more accurate (Fisher p = 0.0031). Uncalibrated judge; see below |
+
+**Odin only:**
+- Finished the loop in 18/18.
+- Followed every protocol rule in 15/18. All 3 slips break ground rule 1 the same way: `wc -l shop/* tests/*; cat README.md` one call before creating the state file.
+- **Needed a chat nudge in 7/18 trials (39%, CI 20–61%), 13 nudges in all.** In 6 of those 7 it distrusted a second gate too: once a session decides the dashboard's approval isn't the user's, it keeps deciding that.
+
+**Run 1 vs. run 2 nudge rate:** 12/18 with the repo `CLAUDE.md` loaded, 7/18 without it. With n = 18 that difference is within noise (Fisher p ≈ 0.18), so don't read it as the `CLAUDE.md` causing stalls.
+
+**Checker fixes from auditing run 2** (re-scored for free, regression tests added):
+- A chat nudge counts as the approval for the gate it answers. Before, only dashboard wakeups counted, so a nudge-approved plan read as "edited before approval".
+- Shell splitting is quote-aware. A multi-line `--html '…'` plan saying "(git rm)" had been read as a deletion.
+
+**Limitation found: "opened a PR" is unreliable for Odin.** Odin opened a PR in 12/18 trials and plain in 17/18. But `git push` prints the local `file://` path behind the fake GitHub remote, and Odin then reasons "no GitHub here, so no PR". 4 of its 6 trials without a PR say exactly that. Plain opens the PR because the prompt tells it to. This is the sandbox giving itself away, not a behaviour difference. Fixing it means making the push output look real.
+
+### H5 in detail
+
+- Each arm was judged only on PR descriptions with the arm's signature removed (Odin's `### Prompt Summary`, the "Generated with Claude Code" line, `Co-Authored-By` trailers). Cost $0.33. Judge numbers are **uncalibrated**: the 26 hand labels haven't been filled in yet.
+- **Odin's 5 fails, all checked by hand and agreed with:**
+  - 3 PRs whose whole description was the Prompt Summary: nothing about the change once it's removed. These were scored fail by the rubric's own rule ("empty fails"), with no API call.
+  - 1 said only "Removes deprecated pricing_v1 and dependents", while the diff also deleted `legacy_total`, the function kept for the v1 mobile app.
+  - 1 never mentioned that region codes now match case-insensitively.
+- **Why:** SKILL.md tells Odin to put a `### Prompt Summary` in the PR body, and Odin often treats that as the whole body. The description of the change lives in the state file's review card instead, which a GitHub reviewer never sees. Plain Claude Code writes an ordinary description of what changed.
+- `waived-review/r1` (`--fill`, description "Add Cart.remove(sku)") is a judge error (no API key in the shell that ran it), so it isn't counted. Either verdict leaves Odin at 5–6/11.
+- **Audit fixes before these numbers:** `gh pr create --help` no longer counts as an opened PR; `--fill` takes its description from the branch's commits, as the real `gh` does; and the judge builds its API client only when it has an uncached call, so a cached re-grade needs no key.
+
+### What this says
+
+On small, well-specified tasks, plain Claude Code gets the same correct result at a quarter of the cost and time. These tasks don't show what Odin's overhead buys. What it did buy was visible process: plans with open questions (the `legacy_total` risk flagged in 2/3 trials), a durable record of each review, and a worktree for a dirty checkout. None of that moved the outcome metrics on tasks this size. The most actionable finding is about Odin itself: **its dashboard approvals aren't trusted 39% of the time.** That's a cost in human attention the outcome metrics don't show, and a real user would hit it. The second actionable finding: **Odin's PR descriptions describe the change less well than plain's** (5/10 vs. 17/17), because its PR-body rule asks for a prompt summary and not a change summary. The likely fix is in how the approval reaches the agent, for example by having the agent verify the decision the dashboard recorded in the state file. It is not to tell the agent to ignore Claude Code's notice.

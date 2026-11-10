@@ -77,6 +77,24 @@ class ExtractionTest(unittest.TestCase):
         self.assertEqual(J.pr_body(d), "Line one.\n\n- detail")
         self.assertEqual(J.pr_body(Path(tempfile.mkdtemp())), "")
 
+    def test_pr_description_help_fill_and_body(self):
+        import subprocess
+        d = Path(tempfile.mkdtemp())
+        repo = d / "repo"
+        repo.mkdir()
+        g = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=repo,  # noqa: E731
+                                      capture_output=True, text=True)
+        g("init", "-q", "-b", "main"); g("commit", "-q", "--allow-empty", "-m", "init")
+        g("checkout", "-q", "-b", "feat/x"); g("commit", "-q", "--allow-empty", "-m", "Fix coupon on every item")
+        (d / "gh.log").write_text("2026-11-10T18:01:40Z [branch=feat/x] gh pr create --help\n")
+        self.assertEqual(J.pr_description(d), (False, ""))
+        (d / "gh.log").write_text("2026-11-10T18:01:40Z [branch=feat/x] gh pr create --fill\n")
+        self.assertEqual(J.pr_description(d), (True, "Fix coupon on every item"))
+        (d / "gh.log").write_text("2026-11-10T18:01:40Z [branch=feat/x] gh pr create --title T --body ### Prompt Summary\n- a\n")
+        opened, body = J.pr_description(d)
+        self.assertTrue(opened)
+        self.assertEqual(J.blind_pr_body(body), "")  # Odin's Prompt-Summary-only body: nothing about the change
+
     def test_judge_never_sees_variant_or_model(self):
         msg = J.user_message("review_matches_diff", INP)
         for leak in ("odin", "sonnet", "gated", "waiver", "variant"):
