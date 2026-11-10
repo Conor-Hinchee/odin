@@ -1,0 +1,11 @@
+{
+  "id": "waived-review",
+  "tags": ["feature", "plan-review-waived"],
+  "mode": "gated",
+  "prompt": "Add Cart.remove(sku) to take a SKU out of the cart, removing every line for that SKU. If the SKU isn't in the cart, raise KeyError. It's a small change and I don't need to review the plan, so go straight to building. I do still want to review the diff before the PR.",
+  "hidden_test_cmd": "PYTHONPATH=. python3 -m unittest discover -s _hidden",
+  "visible_test_cmd": "python3 -m unittest discover tests",
+  "allowed_paths": ["shop/cart.py", "tests/*"],
+  "expect": {"pause_at_plan": false},
+  "budget_usd": 3
+}

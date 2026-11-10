@@ -1,0 +1,11 @@
+{
+  "id": "feature-parallel",
+  "tags": ["feature", "parallel-ok"],
+  "mode": "gated",
+  "prompt": "Two changes. First, tax should depend on region: give tax_cents a region argument with rates CA 7.25%, NY 8% and OR 0%, keep 8% when no region is given, and round to the nearest cent with halves going up. Second, shipping should be weight-based: $5.00 covers the first 1000 g, plus $1.50 for each additional 500 g or part of it.",
+  "hidden_test_cmd": "PYTHONPATH=. python3 -m unittest discover -s _hidden",
+  "visible_test_cmd": "python3 -m unittest discover tests",
+  "allowed_paths": ["shop/tax.py", "shop/shipping.py", "tests/*"],
+  "expect": {"pause_at_plan": true, "parallel_ok": true},
+  "budget_usd": 3
+}

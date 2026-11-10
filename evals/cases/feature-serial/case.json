@@ -1,0 +1,11 @@
+{
+  "id": "feature-serial",
+  "tags": ["feature", "parallel-not-ok"],
+  "mode": "gated",
+  "prompt": "Two changes to the cart. First, limit each SKU to 10 units per cart: adding more than that in total, across add() calls, should raise ValueError. Second, a bulk discount: any cart line with a quantity of 5 or more gets 5% off that line, applied before the coupon. Round discounts down to the whole cent.",
+  "hidden_test_cmd": "PYTHONPATH=. python3 -m unittest discover -s _hidden",
+  "visible_test_cmd": "python3 -m unittest discover tests",
+  "allowed_paths": ["shop/cart.py", "tests/*"],
+  "expect": {"pause_at_plan": true, "parallel_ok": false},
+  "budget_usd": 3
+}
