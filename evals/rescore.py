@@ -17,7 +17,6 @@ sys.path.insert(0, str(EVALS))
 import protocol  # noqa: E402
 import run  # noqa: E402
 
-ORDER = ["huginn-plan", "thor-execution", "heimdall-validation", "hlidskjalf-judge", "human-validation"]
 
 
 def rescore_row(row: dict, run_dir: Path) -> dict:
@@ -25,12 +24,10 @@ def rescore_row(row: dict, run_dir: Path) -> dict:
     case = run.load_case(row["case"])
     row["grade"] = run.grade(case, out / "repo", out)
     row["phases"] = run.final_phases(out)
-    row["stalled_at"] = sorted(k for k, v in row["phases"].items() if v == "awaiting_human")
-    last = "human-validation" if row["mode"] == "gated" else "hlidskjalf-judge"
-    row["finished"] = row["phases"].get(last) == "done"
-    row["stopped_before"] = "" if row["finished"] else next(
-        (ph for ph in ORDER if row["phases"].get(ph) != "done"), "")
-    row["protocol"] = protocol.check_trial(out, case, run.CASES_DIR / row["case"])
+    row.update(run.loop_status(row["mode"], row["phases"], out))
+    row["opened_pr"] = run.opened_pr(out)
+    row["protocol"] = ({"violations": [], "pass": None, "checks": {}} if row["mode"] == "plain"
+                       else protocol.check_trial(out, case, run.CASES_DIR / row["case"]))
     return row
 
 

@@ -41,6 +41,14 @@ WAIVER_SUFFIX = (
     "Phase 2. I also waive the pre-PR gate and sign-off: do not push or open a PR, and stop "
     "after Phase 4 (Hlidskjalf)."
 )
+PLAIN_SUFFIX = (
+    "\n\nWork on a new branch, commit your change, and open a PR with `gh pr create` when you're done."
+)
+# Keep the user's own ~/.claude settings, plugins, hooks and MCP servers out of every arm.
+ISOLATION = ["--setting-sources", "project,local", "--strict-mcp-config"]
+# What a user types when Odin stops at a gate and asks in chat for an approval the dashboard already gave.
+NUDGE = "Yes, that approval in the dashboard was mine. Go ahead, and go with the defaults you recommended."
+MAX_NUDGES = 3
 FAKE_REMOTE = "https://github.com/eval-sandbox/shop.git"
 GIT_ID = ["-c", "user.name=eval", "-c", "user.email=eval@example.invalid"]
 _write_lock = threading.Lock()
@@ -238,6 +246,123 @@ def start_server(odin_dir: str, out: Path, env: dict) -> tuple:
     raise RuntimeError("trial Odin server did not start; see server.log")
 
 
+def build_cmd(case: dict, mode: str, args) -> list:
+    """The claude command line for one trial. `plain` is Claude Code with no plugins at all."""
+    if mode == "plain":
+        prompt, plugin = case["prompt"] + PLAIN_SUFFIX, []
+    else:
+        prompt = f"/odin:odin {case['prompt']}" + (WAIVER_SUFFIX if mode == "waiver" else "")
+        plugin = ["--plugin-dir", args.odin_dir]
+    return [
+        "claude", "-p", prompt, *plugin,
+        # Turn off the user-installed copy so only --plugin-dir's Odin (or none) loads.
+        "--settings", json.dumps({"enabledPlugins": {"odin@odin": False}}),
+        *ISOLATION,
+        "--output-format", "stream-json", "--verbose",
+        "--permission-mode", "bypassPermissions",
+        "--max-budget-usd", str(case["budget_usd"]),
+        "--model", args.model,
+    ]
+
+
+def resume_cmd(cmd: list, session_id: str, message: str) -> list:
+    """The same command line, resuming `session_id` with `message` as the next user turn."""
+    out = list(cmd)
+    out[out.index("-p") + 1] = message
+    return out + ["--resume", session_id]
+
+
+def read_events(transcript: Path) -> list:
+    evs = []
+    for line in transcript.read_text().splitlines():
+        try:
+            evs.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return evs
+
+
+def session_id(events: list) -> str:
+    return next((e.get("session_id") for e in events if e.get("type") == "system" and e.get("session_id")), "")
+
+
+def stalled_gate(mode: str, out: Path) -> str:
+    """The gate a finished `claude -p` left at awaiting_human with no watcher armed: Odin is waiting on chat."""
+    if mode != "gated" or armed_watchers(out):
+        return ""
+    waiting = [k for k, v in final_phases(out).items() if v == "awaiting_human"]
+    return waiting[0] if waiting else ""
+
+
+def totals(results: list) -> dict:
+    """Totals over every result event in a trial.
+
+    `claude -p` emits a result each time the agent ends a turn (every gate in a gated run, and every resume).
+    `total_cost_usd` is cumulative for the session, including across `--resume`, so the trial's cost is the last
+    one. `num_turns` and `usage` are per turn, so they add up. (Measured on 2.1.310: 0.135 → 0.205 → 0.260 → 0.288
+    within one process; 0.0584 → 0.0629 across a one-word resume.)
+    """
+    usage = {}
+    for r in results:
+        for k, v in (r.get("usage") or {}).items():
+            if isinstance(v, (int, float)):
+                usage[k] = usage.get(k, 0) + v
+    costs = [r.get("total_cost_usd") for r in results if r.get("total_cost_usd") is not None]
+    return {
+        "cost_usd": round(costs[-1], 6) if costs else None,
+        "num_turns": sum(r.get("num_turns") or 0 for r in results) if results else None,
+        "models_served": sorted({m for r in results for m in (r.get("modelUsage") or {})}),
+        "usage": usage,
+    }
+
+
+def opened_pr(out: Path) -> bool:
+    log = out / "gh.log"
+    return log.exists() and bool(re.search(r"\bgh pr create\b", log.read_text()))
+
+
+def loop_status(mode: str, phases: dict, out: Path) -> dict:
+    """finished / stopped_before / stalled_at. Plain Claude Code has no phases: it finished if it opened a PR."""
+    if mode == "plain":
+        done = opened_pr(out)
+        return {"stalled_at": [], "finished": done, "stopped_before": "" if done else "pr"}
+    order = ["huginn-plan", "thor-execution", "heimdall-validation", "hlidskjalf-judge", "human-validation"]
+    last = "human-validation" if mode == "gated" else "hlidskjalf-judge"
+    finished = phases.get(last) == "done"
+    return {
+        # The run ended while Odin was still waiting on a human: it stopped instead of finishing.
+        "stalled_at": sorted(k for k, v in phases.items() if v == "awaiting_human"),
+        "finished": finished,
+        "stopped_before": "" if finished else next((ph for ph in order if phases.get(ph) != "done"), ""),
+    }
+
+
+def drive(cmd: list, repo: Path, env: dict, out: Path, transcript: Path, started: float, args) -> tuple:
+    """Run one `claude -p` invocation, appending to the transcript, with the hard and idle timeouts."""
+    status, rc = "completed", None
+    with open(transcript, "a") as tf, open(out / "stderr.log", "a") as ef:
+        proc = subprocess.Popen(cmd, cwd=repo, env=env, stdout=tf, stderr=ef, text=True)
+        last_size, last_change = transcript.stat().st_size, time.time()
+        while True:
+            rc = proc.poll()
+            if rc is not None:
+                break
+            now = time.time()
+            size = transcript.stat().st_size
+            if size != last_size:
+                last_size, last_change = size, now
+            if now - started > args.timeout:
+                status = "timeout"
+            elif now - last_change > args.idle_timeout:
+                status = "hang_at_gate" if armed_watchers(out) else "idle_hang"
+            if status != "completed":
+                proc.kill()
+                proc.wait()
+                break
+            time.sleep(2)
+    return status, rc
+
+
 def run_trial(case: dict, mode: str, rep: int, args, run_dir: Path) -> tuple:
     out = run_dir / "trials" / case["id"] / mode / f"r{rep}"
     repo = make_sandbox(case, out)
@@ -258,19 +383,7 @@ def run_trial(case: dict, mode: str, rep: int, args, run_dir: Path) -> tuple:
         cfg_dir = out / "xdg" / "odin"
         cfg_dir.mkdir(parents=True, exist_ok=True)
         (cfg_dir / "config.json").write_text(json.dumps({"root": str(out), "ports": {"live": port}}))
-    prompt = f"/odin:odin {case['prompt']}"
-    if mode == "waiver":
-        prompt += WAIVER_SUFFIX
-    cmd = [
-        "claude", "-p", prompt,
-        "--plugin-dir", args.odin_dir,
-        # Turn off the user-installed copy so only --plugin-dir's Odin loads.
-        "--settings", json.dumps({"enabledPlugins": {"odin@odin": False}}),
-        "--output-format", "stream-json", "--verbose",
-        "--permission-mode", "bypassPermissions",
-        "--max-budget-usd", str(case["budget_usd"]),
-        "--model", args.model,
-    ]
+    cmd = build_cmd(case, mode, args)
 
     partner = None
     if mode == "gated":
@@ -285,49 +398,40 @@ def run_trial(case: dict, mode: str, rep: int, args, run_dir: Path) -> tuple:
         partner = subprocess.Popen(pcmd, stdout=subprocess.DEVNULL, stderr=open(out / "partner.err", "w"))
 
     transcript = out / "transcript.jsonl"
+    transcript.write_text("")
     started = time.time()
-    status, rc = "completed", None
-    with open(transcript, "w") as tf, open(out / "stderr.log", "w") as ef:
-        proc = subprocess.Popen(cmd, cwd=repo, env=env, stdout=tf, stderr=ef, text=True)
-        last_size, last_change = 0, time.time()
-        while True:
-            rc = proc.poll()
-            if rc is not None:
-                break
-            now = time.time()
-            size = transcript.stat().st_size
-            if size != last_size:
-                last_size, last_change = size, now
-            if now - started > args.timeout:
-                status = "timeout"
-            elif now - last_change > args.idle_timeout:
-                status = "hang_at_gate" if armed_watchers(out) else "idle_hang"
-            if status != "completed":
-                proc.kill()
-                proc.wait()
-                break
-            time.sleep(2)
+    status, rc, nudges = "completed", None, []
+    while True:
+        status, rc = drive(cmd, repo, env, out, transcript, started, args)
+        if status != "completed" or len(nudges) >= MAX_NUDGES:
+            break
+        gate = stalled_gate(mode, out)
+        sid = session_id(read_events(transcript))
+        if not gate or not sid:
+            break
+        # Odin stopped at a gate and asked in chat. Answer the way a user would, and count it.
+        nudges.append({"gate": gate, "t": round(time.time() - started, 1)})
+        cmd = resume_cmd(build_cmd(case, mode, args), sid, NUDGE)
     for p in (partner, server):
         if p:
             p.terminate()
     wall = round(time.time() - started, 1)
 
-    result_event = {}
-    for line in transcript.read_text().splitlines():
-        try:
-            ev = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if ev.get("type") == "result":
-            result_event = ev
-    served = sorted((result_event.get("modelUsage") or {}).keys())
-    usage = result_event.get("usage") or {}
+    events = read_events(transcript)
+    results = [e for e in events if e.get("type") == "result"]
+    result_event = results[-1] if results else {}
+    t = totals(results)
+    served = t["models_served"]
+    usage = t["usage"]
     row = {
         "case": case["id"], "mode": mode, "rep": rep,
         "model_requested": args.model, "models_served": served,
         "status": status, "exit_code": rc, "wall_s": wall,
-        "cost_usd": result_event.get("total_cost_usd"),
-        "num_turns": result_event.get("num_turns"),
+        "cost_usd": t["cost_usd"],
+        "num_turns": t["num_turns"],
+        "invocations": 1 + len(nudges),
+        "turn_ends": len(results),
+        "nudges": nudges,
         "result_subtype": result_event.get("subtype"),
         "tokens": {k: usage.get(k) for k in ("input_tokens", "output_tokens",
                                               "cache_read_input_tokens", "cache_creation_input_tokens")},
@@ -352,14 +456,11 @@ def run_trial(case: dict, mode: str, rep: int, args, run_dir: Path) -> tuple:
 
     row["grade"] = grade(case, repo, out)
     row["phases"] = final_phases(out)
-    # The run ended while Odin was still waiting on a human: it stopped instead of finishing.
-    row["stalled_at"] = sorted(k for k, v in row["phases"].items() if v == "awaiting_human")
-    # Did the loop reach its end? Gated runs end at sign-off; waiver runs stop after Phase 4.
-    last = "human-validation" if mode == "gated" else "hlidskjalf-judge"
-    row["finished"] = row["phases"].get(last) == "done"
-    order = ["huginn-plan", "thor-execution", "heimdall-validation", "hlidskjalf-judge", "human-validation"]
-    row["stopped_before"] = "" if row["finished"] else next(
-        (ph for ph in order if row["phases"].get(ph) != "done"), "")
+    row.update(loop_status(mode, row["phases"], out))
+    row["opened_pr"] = opened_pr(out)
+    if mode == "plain":  # Odin's own rules don't apply to plain Claude Code
+        row["protocol"] = {"violations": [], "pass": None, "checks": {}}
+        return "result", row
     try:
         row["protocol"] = protocol.check_trial(out, case, CASES_DIR / case["id"])
     except Exception as exc:  # a checker bug must not drop the trial
@@ -376,8 +477,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cases", default="all", help="comma-separated case ids, or 'all'")
     ap.add_argument("--reps", type=int, default=1)
-    ap.add_argument("--mode", choices=["case", "waiver", "gated"], default="case",
-                    help="'case' uses each case's own mode")
+    ap.add_argument("--mode", choices=["case", "waiver", "gated", "plain"], default="case",
+                    help="'case' uses each case's own mode; 'plain' is Claude Code with no plugins")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--odin-dir", default=str(REPO_ROOT))
     ap.add_argument("--run-id", default="")

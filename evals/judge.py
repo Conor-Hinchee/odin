@@ -224,6 +224,13 @@ def pr_body(trial: Path) -> str:
     return body
 
 
+def blind_pr_body(body: str) -> str:
+    """Drop what identifies the arm, not what describes the change: Odin's Prompt Summary and attribution lines."""
+    body = re.sub(r"(?ms)^#{2,4} Prompt Summary\s*$.*?(?=^#{1,4} |\Z)", "", body)
+    body = re.sub(r"(?m)^.*Generated with \[?Claude Code.*$", "", body)
+    return re.sub(r"\n{3,}", "\n\n", body).strip()
+
+
 def repo_context(case_id: str) -> str:
     repo = CASES_DIR / case_id / "repo"
     files = sorted(p.relative_to(repo).as_posix() for p in repo.rglob("*")
@@ -250,15 +257,21 @@ def state_files(trial: Path) -> list:
                   if p.relative_to(trial).parts[0] != "grade")
 
 
-def trial_inputs(trial: Path, row: dict) -> dict:
-    """Everything the judge sees for one trial: no variant, model or score."""
+def trial_inputs(trial: Path, row: dict, review_source: str = "all") -> dict:
+    """Everything the judge sees for one trial: no variant, model or score.
+
+    review_source "pr" judges the PR description alone (blinded), so two arms are compared on the same artifact.
+    """
     case = json.loads((CASES_DIR / row["case"] / "case.json").read_text())
     states = state_files(trial)
     state = max((p.read_text() for p in states), key=len, default="")
-    review = review_text(state) if state else ""
     body = pr_body(trial)
-    if body:
-        review = (review + "\n\nPR description:\n" + body).strip()
+    if review_source == "pr":
+        review = ("PR description:\n" + blind_pr_body(body)) if blind_pr_body(body) else ""
+    else:
+        review = review_text(state) if state else ""
+        if body:
+            review = (review + "\n\nPR description:\n" + body).strip()
     return {
         "request": case["prompt"],
         "repo_context": repo_context(row["case"]),
@@ -372,14 +385,14 @@ def cmd_run(args) -> int:
     run_dir = Path(args.run_dir).resolve()
     judge = Judge(model=args.model, cache_dir=run_dir / "judge_cache")
     props = args.properties.split(",") if args.properties else sorted(PROPERTIES)
-    out_path = run_dir / "judge.jsonl"
+    out_path = run_dir / ("judge.jsonl" if args.review_source == "all" else f"judge-{args.review_source}.jsonl")
     rows_out, spent = [], 0.0
     for row in read_rows(run_dir)[: args.limit or None]:
         trial = run_dir / row["trial_dir"]
-        inp = trial_inputs(trial, row)
+        inp = trial_inputs(trial, row, args.review_source)
         for prop in props:
             base = {"case": row["case"], "mode": row["mode"], "rep": row["rep"], "property": prop,
-                    "rubric_version": RUBRIC_VERSION}
+                    "rubric_version": RUBRIC_VERSION, "review_source": args.review_source}
             if not applicable(prop, inp):
                 rows_out.append({**base, "status": "n/a"})
                 continue
@@ -534,6 +547,8 @@ def main() -> int:
     r.add_argument("--properties", default="")
     r.add_argument("--limit", type=int, default=0)
     r.add_argument("--model", default=JUDGE_MODEL)
+    r.add_argument("--review-source", choices=["all", "pr"], default="all",
+                   help="'pr' judges only the blinded PR description, for comparing arms")
     r.set_defaults(func=cmd_run)
     s = sub.add_parser("selftest")
     s.add_argument("--model", default=JUDGE_MODEL)

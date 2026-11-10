@@ -10,11 +10,12 @@ python3 evals/run.py --cases all --reps 3 --jobs 3       # paid: about $0.20–0
 python3 evals/summarize.py evals/results/<run-id>
 python3 evals/rescore.py evals/results/<run-id>          # free: re-grade an old run after a grader/checker change
 python3 evals/protocol.py evals/results/<run-id>/trials/<case>/<mode>/r1   # one trial's rule checks
+python3 evals/compare.py evals/results/<odin-run> evals/results/<plain-run>  # free: arm vs. arm (EXPERIMENT-1.md)
 ```
 
 Useful flags for `run.py`:
 - `--cases a,b` runs a subset.
-- `--mode waiver|gated` overrides each case's own mode.
+- `--mode waiver|gated|plain` overrides each case's own mode (`plain` is Claude Code with no plugins).
 - `--model` defaults to `claude-sonnet-5-5`.
 - `--odin-dir` points at another Odin checkout, to compare versions.
 - `--timeout` is the hard ceiling per trial and `--idle-timeout` is the hang detector.
@@ -23,7 +24,8 @@ Useful flags for `run.py`:
 
 1. The case's `repo/` is copied into a fresh git repo with a local bare `origin`, then the case's `setup.sh` runs (for example, to leave another session's uncommitted work behind).
 2. `claude -p "/odin:odin <prompt>"` runs with `--plugin-dir <odin-dir>`, the installed Odin turned off, its own `XDG_CONFIG_HOME` and `ODIN_ROOT`, a fake `gh` on `PATH` (`bin/gh`), notifications off (`ODIN_NOTIFY=0`), and a per-trial budget cap.
-3. In `gated` mode, `partner.py` answers every approval checkpoint through `write_wakeup_event()`, the same path as the dashboard. In `waiver` mode, the prompt waives the checkpoints.
+3. In `gated` mode, `partner.py` answers every approval checkpoint through the trial's own dashboard API. If Odin then ends its turn at the gate anyway, asking in chat, the runner resumes the session once with "yes, that approval was mine" (at most 3 times, each recorded under `nudges`). In `waiver` mode, the prompt waives the checkpoints. In `plain` mode there is no Odin at all: the case prompt plus "work on a branch and open a PR", for comparison.
+   Every mode runs with `--setting-sources project,local --strict-mcp-config`, so your own `~/.claude` settings, plugins and MCP servers stay out.
 4. Grading uses the PR's head branch if a PR was opened, and the working tree otherwise:
    - the hidden tests (`hidden/`, copied in only after the run)
    - the visible tests

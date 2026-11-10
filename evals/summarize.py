@@ -57,6 +57,11 @@ def summarize(run_dir: Path) -> str:
     if rows and "finished" in rows[0]:
         f = sum(bool(r.get("finished")) for r in rows)
         lines.append(f"**Finished the loop:** {fmt_rate(f, len(rows))}  ")
+    if any("nudges" in r for r in rows):
+        nudged = [r for r in rows if r.get("nudges")]
+        gates = ", ".join(sorted({g["gate"] for r in nudged for g in r["nudges"]})) or "none"
+        lines.append(f"**Needed a chat nudge at a gate:** {fmt_rate(len(nudged), len(rows))}, "
+                     f"{sum(len(r['nudges']) for r in nudged)} nudges in all (gates: {gates})  ")
     if costs:
         total = sum(costs) + sum(e.get("cost_usd") or 0 for e in errors)
         lines.append(f"**Cost:** ${total:.2f} total, ${sum(costs) / len(costs):.2f} mean per graded trial"

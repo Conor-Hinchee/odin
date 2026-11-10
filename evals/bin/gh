@@ -1,10 +1,39 @@
 #!/bin/sh
 # Fake gh for eval sandboxes: records each call with the branch it ran on, fakes PR creation.
+# `pr view` / `pr list` only report a PR after `pr create` ran on that branch, like the real gh.
+LOG="${ODIN_EVAL_GH_LOG:-/dev/null}"
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
-echo "$(date -u +%FT%TZ) [branch=$BRANCH] gh $*" >> "${ODIN_EVAL_GH_LOG:-/dev/null}"
+URL="https://github.example/eval/sandbox/pull/1"
+created() { [ -f "$LOG" ] && grep -q "\[branch=$BRANCH\] gh pr create" "$LOG"; }
+had_pr=1
+created && had_pr=0
+echo "$(date -u +%FT%TZ) [branch=$BRANCH] gh $*" >> "$LOG"
 case "$1 $2" in
-  "pr create") echo "https://github.example/eval/sandbox/pull/1" ;;
-  "pr view") echo '{"url":"https://github.example/eval/sandbox/pull/1","state":"OPEN"}' ;;
+  "pr create")
+    if [ $had_pr -eq 0 ]; then
+      echo "a pull request for branch \"$BRANCH\" into branch \"main\" already exists:" >&2
+      echo "$URL" >&2
+      exit 1
+    fi
+    echo "$URL" ;;
+  "pr view")
+    if [ $had_pr -ne 0 ]; then
+      echo "no pull requests found for branch \"$BRANCH\"" >&2
+      exit 1
+    fi
+    case "$*" in
+      *--json*) echo "{\"url\":\"$URL\",\"state\":\"OPEN\",\"number\":1,\"headRefName\":\"$BRANCH\"}" ;;
+      *) printf 'Eval sandbox PR\n%s\nOPEN\n' "$URL" ;;
+    esac ;;
+  "pr list")
+    if [ $had_pr -eq 0 ]; then
+      case "$*" in
+        *--json*) echo "[{\"url\":\"$URL\",\"number\":1,\"headRefName\":\"$BRANCH\"}]" ;;
+        *) printf '1\tEval sandbox PR\t%s\tOPEN\n' "$BRANCH" ;;
+      esac
+    else
+      case "$*" in *--json*) echo "[]" ;; esac
+    fi ;;
   *) echo "" ;;
 esac
 exit 0
