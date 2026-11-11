@@ -26,6 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from odin_config import base_url, load_config, render_ports  # noqa: E402
+import odin_friction  # noqa: E402
 
 CONFIG = load_config()
 AI_DEV_ROOT = CONFIG["root"]
@@ -4908,6 +4909,48 @@ def _unaddressed_friction_events(ledger: dict) -> list[dict]:
     return friction
 
 
+def _friction_transcript(content: str, explicit: str | None = None) -> Path | None:
+    if explicit:
+        return Path(explicit).expanduser()
+    m = re.search(r'<body\b[^>]*\bdata-session-id=["\']([^"\']+)["\']', content)
+    return odin_friction.find_transcript(m.group(1)) if m else None
+
+
+def _unaddressed_scan_findings(content: str, html_path: Path, ledger: dict, transcript: str | None = None,
+                               extra_waiver: str = "") -> list[dict]:
+    """friction-scan findings that no delta or waiver names by id. Mímir delta tickets are exempt."""
+    if ledger.get("parent_delta_id") or ledger.get("mimir_delta_origin"):
+        return []
+    findings = odin_friction.scan(content, html_path, _friction_transcript(content, transcript))
+    waivers = [extra_waiver, str(ledger.get("incident_waiver") or "")]
+    waivers += [str(it.get("incident_waiver") or "") for it in ledger.get("iterations", [])]
+    deltas = _collect_all_deltas(ledger)
+    return [f for f in findings if not odin_friction.addressed(f["id"], deltas, waivers)]
+
+
+def cmd_friction_scan(args: argparse.Namespace) -> int:
+    try:
+        html_path = _resolve_html_path(args)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    if not html_path.exists():
+        print(f"Error: File not found: {html_path}", file=sys.stderr)
+        return 1
+    content = html_path.read_text(encoding="utf-8")
+    transcript = _friction_transcript(content, getattr(args, "transcript", None))
+    findings = odin_friction.scan(content, html_path, transcript)
+    if getattr(args, "json", False):
+        print(json.dumps({"transcript": str(transcript) if transcript else None, "findings": findings}, indent=2))
+        return 0
+    print(f"Transcript: {transcript if transcript and transcript.exists() else 'not found (state file only)'}")
+    if not findings:
+        print("No friction found.")
+    for f in findings:
+        print(f"- {f['id']}: {f['text']}\n    evidence: {f['evidence']}")
+    return 0
+
+
 def _maybe_bind_session_id(content: str, explicit_session_id: str | None = None) -> str:
     """Bind data-session-id onto <body> if explicitly passed or if currently empty and ODIN_SESSION_ID is set."""
     sid = (explicit_session_id or "").strip()
@@ -4998,6 +5041,17 @@ def cmd_update_phase(args: argparse.Namespace) -> int:
             lines.append(
                 "Record a Mímir Harness Delta (`odin-state.py propose-delta --file ...`) first, or pass `--incident-waiver \"<why no harness delta is needed>\"`."
             )
+            print("\n".join(lines), file=sys.stderr)
+            return 1
+        missed = _unaddressed_scan_findings(content, html_path, ledger, getattr(args, "transcript", None),
+                                            incident_waiver)
+        if missed:
+            lines = [f"Error: Phase 4 (Hlidskjalf) cannot be marked DONE: friction-scan found {len(missed)} harness "
+                     "failure(s) that no delta or waiver names:"]
+            for f in missed:
+                lines.append(f"  - {f['id']}: {f['text']} ({f['evidence']})")
+            lines.append("For each one, record `propose-delta` with the id in --failure-pattern, or name the id in "
+                         "--incident-waiver with the reason it needs no harness change.")
             print("\n".join(lines), file=sys.stderr)
             return 1
 
@@ -6920,6 +6974,7 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--repo-dir", action="append", help="Explicit git repository/worktree directory (repeatable for multi-repo diffs; defaults to body[data-worktree])")
     up.add_argument("--pr-url", help="GitHub Pull Request URL to stamp on <body> and render in the header & phase card")
     up.add_argument("--session-id", dest="session_id", help="Optional session ID to bind onto <body data-session-id>")
+    up.add_argument("--transcript", help="Session transcript for the Phase 4 friction scan (default: found from data-session-id)")
     up.add_argument("--incident-waiver", dest="incident_waiver", help="Explicit Phase 4 waiver reason when mid-flight incidents/failed checks do not require a Mímir Harness Delta")
     up.add_argument(
         "--prompt-summary-item",
@@ -6928,6 +6983,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Candidate bullet for ### Prompt Summary in Phase 3 Heimdall Pre-PR Gate (repeatable).",
     )
     up.set_defaults(func=cmd_update_phase)
+
+    fs = sub.add_parser("friction-scan", help="List harness failures (missing PR, ignored or unwatched gates, late state file) from the state file and session transcript")
+    fs.add_argument("--file", help="Path to the Odin state HTML file")
+    fs.add_argument("--slug", help="Task slug (resolved under ODIN_ROOT)")
+    fs.add_argument("--transcript", help="Session transcript JSONL (default: found from data-session-id)")
+    fs.add_argument("--json", action="store_true")
+    fs.set_defaults(func=cmd_friction_scan)
 
     lg = sub.add_parser("log", help="Append a progress entry to a phase's iteration card (no status change, no notification)")
     lg.add_argument("html_file", nargs="?", help="Path to odin-states/<slug>.html")

@@ -744,7 +744,7 @@ class TestOdin(unittest.TestCase):
                 diff_rationale=None,
                 file_note=None,
                 repo_dir=None,
-                pr_url=None,
+                pr_url="https://github.com/example/repo/pull/1" if phase == "heimdall-validation" else None,
             )
             self.assertEqual(self.odin_state.cmd_update_phase(args), 0)
 

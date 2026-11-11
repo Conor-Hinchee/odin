@@ -152,7 +152,12 @@ graph TD
 - **REJECT**: mark `reject` (which notifies), and route the specific failures back to phase 2.
 
 ### Phase 4: Hlidskjalf (retrospective)
-- In `#hlidskjalf-judge`, review plan adherence, subagent efficiency, and what slowed the task down.
+- **Run the friction scan first.** Most harness failures never reach the state file, so read them from the transcript:
+  ```bash
+  python3 "$ODIN/odin-state.py" friction-scan --file "odin-states/<task-slug>.html"
+  ```
+  It lists each failure with an id and evidence (a missing PR, a dashboard decision not acted on, a pause with no watcher, project files read before the state file). Address every finding: a `propose-delta` whose `--failure-pattern` starts with the id, or `--incident-waiver "<id>: <reason>"` when it needs no harness change, for example a PR the human waived at the gate.
+- In `#hlidskjalf-judge`, review plan adherence, subagent efficiency, and what slowed the task down. Then ask the question the scan can't: **did you substitute or skip any required step on an assumption you didn't check?** ("The remote looks local, so no PR" is one.) If so, that's a delta.
 - If the task needed more than one iteration, had a Heimdall rejection, or exposed a reusable gap in a skill, rule or script, record a **harness delta proposal**:
   ```bash
   python3 "$ODIN/odin-state.py" propose-delta --file "odin-states/<task-slug>.html" \
@@ -166,7 +171,7 @@ graph TD
   Write proposals in general terms. An approved delta is committed to the repository that owns the target file, often Odin's own public repo, so describe the pattern without the task's code, names, internal URLs or secrets.
 
   Proposals stay in the state file's ledger and do not touch the feature branch. They are reviewed later through the dashboard's **🧠 Mímir Harness Audit** or `mimir-audit`, and **⚡ Approve & Spawn Delta Ticket** (on the project card, in-ticket banner, or Mímir modal) turns one into its own standalone Phase 1 Odin task (`odin-states/mimir-delta-<slug>.html` with `#huginn-plan` active and `data-session-id=""`), copying its `/odin` launch prompt to the clipboard for a fresh session.
-- **Incident-to-delta gate.** If the current iteration logged any `incident` (`🚨`) or failed check (`outcome="fail"`), `update-phase --phase hlidskjalf --status done` blocks completion until you either record a `propose-delta` addressing the friction or pass `--incident-waiver "<reason>"` for a genuinely one-off flake.
+- **Incident-to-delta gate.** If the current iteration logged any `incident` (`🚨`) or failed check (`outcome="fail"`), `update-phase --phase hlidskjalf --status done` blocks completion until you either record a `propose-delta` addressing the friction or pass `--incident-waiver "<reason>"` for a genuinely one-off flake. It also blocks on every `friction-scan` finding whose id no delta or waiver names, and the error lists them.
 - Mark done.
 
 ### Phase 5: Human validation (sign-off)

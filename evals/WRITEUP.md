@@ -85,7 +85,7 @@ Here's what I'd tell anyone building agent evals: **audit the transcripts before
 - **The protocol checker had false positives.** A chat nudge wasn't counted as the approval it was, and a multi-line plan containing the words "(git rm)" was read as a deletion. Shell splitting is now quote-aware.
 - **PR bodies written to a file were invisible.** Some agents passed `--body-file`, which the fake `gh` logged only as a path, so the judge would have scored a good description as empty. It now keeps a copy.
 
-Each fix has a regression test. All of them are free to run: 71 tests for the eval harness and 66 for Odin.
+Each fix has a regression test. All of them are free to run: 74 tests for the eval harness and 79 for Odin.
 
 ## Limitations
 
@@ -103,6 +103,12 @@ The pre-flight ended it. Across **six traps**, three with a clue in the repo and
 
 The useful result is the boundary it draws. On a single ambiguous decision where one reading is more careful, the model finds the careful one. A plan review earns its keep only for preferences that live in the human's head, or for decisions on bigger tasks that interact. That narrows what Odin's gates have to prove, and the harness now has the reviewer, the plan-mode arm and the correction plumbing to test either one.
 
+## The retrospective: from 0 of 22 to 22 of 22
+
+Odin's retrospective (Hlidskjalf) is where harness failures are meant to become fixes. Scored offline against ground truth from the runner and the protocol checker, it had caught **none** of the 22 known failures in Experiments 1 and 2: missing PRs, ignored dashboard approvals, files read before the state file existed. It reads only the state file, and most of those failures never reach it.
+
+A new `friction-scan` reads the local session transcript as well, and the Phase 4 gate now blocks until every finding is named in a delta or a waiver. It surfaces 22/22 on the trials it was developed on, and **19/21 with 2 false positives on 25 trials it had never seen**. All four disagreements trace to a fake-`gh` bug and a bookkeeping gap in the older runs. Details: [LOOKBACK.md](LOOKBACK.md). Whether the agent then writes a good fix for each finding still needs a paid run.
+
 ## Next
 
 - Calibrate the judge against hand labels.
@@ -112,4 +118,4 @@ The useful result is the boundary it draws. On a single ambiguous decision where
 
 ## Reproduce
 
-Commands and setup: [README.md](README.md). Pre-registration, every run and every audit: [EXPERIMENT-1.md](EXPERIMENT-1.md) and [EXPERIMENT-2.md](EXPERIMENT-2.md). Earlier lessons: [SPIKE.md](SPIKE.md).
+Commands and setup: [README.md](README.md). Pre-registration, every run and every audit: [EXPERIMENT-1.md](EXPERIMENT-1.md) and [EXPERIMENT-2.md](EXPERIMENT-2.md). Retrospective recall: [LOOKBACK.md](LOOKBACK.md). Earlier lessons: [SPIKE.md](SPIKE.md).
