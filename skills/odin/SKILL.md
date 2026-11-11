@@ -148,6 +148,7 @@ graph TD
   ```
   The review shows 12 lines of context, a rationale banner, per-file notes, split and unified views with word-level highlights, line or whole-file comments, and an interactive **📝 Curate PR Prompt Summary (`### Prompt Summary`)** panel in the Heimdall Pre-PR Gate banner (auto-seeded from `--prompt-summary-item` or the session transcript).
 - **Pre-PR gate.** If tests pass and no PR exists yet, do not skip ahead. Pause at `awaiting_human`, ask the user to review the diff and curate/approve the `### Prompt Summary` bullets before opening the PR, and arm the watcher. When the user clicks **✅ Approve Code Diff & Open PR**, the wakeup JSON includes `approvedPromptSummary`. After approval, mark the phase active (first call), push the branch, and open the PR using the approved `### Prompt Summary` bullets. Then run `update-phase --phase heimdall --status done --with-diff --pr-url "<url>"`, which stamps `data-pr-url` and the 🔗 PR badge.
+- **No PR, by the human's choice.** If the human decides at the pre-PR gate to land without a PR (for example, straight onto `main`), close Heimdall with `update-phase --phase heimdall --status done --pr-waived "<their reason>"`. That records the decision, so the Phase 4 friction scan doesn't report `missing-pr`. Only the human waives a PR: never skip one on your own judgement, for example because the remote looks local.
 - **PR body.** The PR is read on GitHub, where the state file's review card isn't visible, so the body must describe the change itself. Start with a `## Summary` that says what changed and why: every behaviour change, including the defaults you chose for open questions (such as "unknown regions raise `ValueError`" or "region codes match case-insensitively"); every deleted file, function or public API; and the tests added. Reuse the `--diff-rationale` and `--file-note` text from the pre-PR review. After it, add a `### Prompt Summary` bullet list using the human-curated bullets from the Heimdall Pre-PR Gate (`approvedPromptSummary`). A body that is only the Prompt Summary is incomplete. If the user has a `pr` block in their Odin config, the plugin's PreToolUse hook adds the configured label and a session telemetry section (verbatim prompt dumps are off by default unless `pr.include_verbatim_prompts: true` is explicitly configured), denies a body that says nothing about the change beyond the Prompt Summary (`pr.require_change_summary`, on by default), and asks the user to confirm the rewritten command. Never write a bare `#<digits>` for numbered rules or steps ("Rule 12", not "Rule #12"), because GitHub links those to unrelated issues.
 - **REJECT**: mark `reject` (which notifies), and route the specific failures back to phase 2.
 
@@ -156,7 +157,7 @@ graph TD
   ```bash
   python3 "$ODIN/odin-state.py" friction-scan --file "odin-states/<task-slug>.html"
   ```
-  It lists each failure with an id and evidence (a missing PR, a dashboard decision not acted on, a pause with no watcher, project files read before the state file). Address every finding: a `propose-delta` whose `--failure-pattern` starts with the id, or `--incident-waiver "<id>: <reason>"` when it needs no harness change, for example a PR the human waived at the gate.
+  It lists each failure with an id and evidence (a missing PR, a dashboard decision not acted on, a pause with no watcher, project files read before the state file). Address every finding: a `propose-delta` whose `--failure-pattern` starts with the id, or `--incident-waiver "<id>: <reason>"` when it needs no harness change.
 - In `#hlidskjalf-judge`, review plan adherence, subagent efficiency, and what slowed the task down. Then ask the question the scan can't: **did you substitute or skip any required step on an assumption you didn't check?** ("The remote looks local, so no PR" is one.) If so, that's a delta.
 - If the task needed more than one iteration, had a Heimdall rejection, or exposed a reusable gap in a skill, rule or script, record a **harness delta proposal**:
   ```bash
@@ -175,7 +176,7 @@ graph TD
 - Mark done.
 
 ### Phase 5: Human validation (sign-off)
-- A task that changed a git repo needs a linked PR before sign-off, unless the user waived it at the pre-PR gate.
+- A task that changed a git repo needs a linked PR before sign-off, unless the user waived it at the pre-PR gate (`--pr-waived`).
 - Set `#human-validation` to `awaiting_human` (which notifies), and arm the watcher.
 - **Rejection or follow-up feedback.** Whether it comes from the dashboard or in chat after phase 4 or 5, your **first** tool call is:
   ```bash

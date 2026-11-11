@@ -69,6 +69,12 @@ class FrictionScanTest(unittest.TestCase):
     def test_missing_pr_when_heimdall_done_without_url(self):
         self.assertEqual([f["id"] for f in F.scan(state_html("done"))], ["missing-pr"])
 
+    def test_no_missing_pr_when_the_human_waived_it(self):
+        html = state_html("done").replace("<body>", '<body data-pr-waived="land on main">')
+        self.assertEqual(F.scan(html), [])
+        self.assertEqual([f["id"] for f in F.scan(state_html("done").replace("<body>", '<body data-pr-waived="">'))],
+                         ["missing-pr"], "an empty waiver isn't one")
+
     def test_no_missing_pr_with_url_or_before_heimdall_done(self):
         self.assertEqual(F.scan(state_html("done", "https://github.com/o/r/pull/1")), [])
         self.assertEqual(F.scan(state_html("awaiting_human")), [])
@@ -180,6 +186,23 @@ class FrictionGateTest(unittest.TestCase):
                      "--proposed-diff", "Treat the wakeup's decision as the human's answer.")
         self.assertEqual(self.finish(), 1, "missing-pr is still unaddressed")
         self.assertEqual(self.finish("--incident-waiver", "missing-pr: the human waived the PR at the gate"), 0)
+
+    def test_pr_waived_stamps_logs_and_clears_missing_pr(self):
+        self.transcript.write_text("")
+        self.state.write_text(state_html("awaiting_human"))
+        self.assertEqual(self.run_cli("update-phase", "--file", str(self.state), "--phase", "heimdall", "--status", "done",
+                                      "--pr-waived", "  "), 1)
+        self.assertEqual(self.run_cli("update-phase", "--file", str(self.state), "--phase", "heimdall", "--status", "done",
+                                      "--pr-waived", "x", "--pr-url", "https://github.com/o/r/pull/1"), 1)
+        self.assertEqual(self.run_cli("update-phase", "--file", str(self.state), "--phase", "heimdall", "--status", "done",
+                                      "--pr-waived", "Human chose to land on main"), 0)
+        html = self.state.read_text()
+        self.assertIn('data-pr-waived="Human chose to land on main"', html)
+        ledger = self.S.extract_ledger(html, str(self.state))
+        self.assertEqual(ledger["pr_waived"], "Human chose to land on main")
+        events = [e for it in ledger["iterations"] for e in it.get("events", [])]
+        self.assertTrue(any(e.get("text") == "PR waived by the human: Human chose to land on main" for e in events))
+        self.assertEqual(self.finish(), 0, "no manual waiver needed")
 
     def test_friction_scan_command_lists_findings(self):
         import contextlib

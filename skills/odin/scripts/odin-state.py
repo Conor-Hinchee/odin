@@ -4334,6 +4334,15 @@ def ensure_diff_styles(content: str) -> str:
     return ODIN_DIFF_STYLES + "\n" + content
 
 
+def stamp_pr_waived_into_html(content: str, reason: str) -> str:
+    """Record on <body> that the human chose to land without a PR, so friction-scan doesn't report missing-pr."""
+    esc = html_mod.escape(reason.strip(), quote=True)
+    if re.search(r'<body\b[^>]*\bdata-pr-waived=', content, re.IGNORECASE):
+        return re.sub(r'(<body\b[^>]*\bdata-pr-waived=["\'])[^"\']*(["\'])', lambda m: m.group(1) + esc + m.group(2),
+                      content, count=1, flags=re.IGNORECASE)
+    return re.sub(r"(<body\b)", lambda m: f'{m.group(1)} data-pr-waived="{esc}"', content, count=1, flags=re.IGNORECASE)
+
+
 def stamp_pr_url_into_html(content: str, pr_url: str) -> str:
     if not pr_url:
         return content
@@ -5010,6 +5019,17 @@ def cmd_update_phase(args: argparse.Namespace) -> int:
         print(f"Error: Invalid phase {args.phase}", file=sys.stderr)
         return 1
 
+    pr_waived = getattr(args, "pr_waived", None)
+    if pr_waived is not None:
+        pr_waived = pr_waived.strip()
+        if not pr_waived:
+            print("Error: --pr-waived needs the reason the human gave for landing without a PR", file=sys.stderr)
+            return 1
+        if (getattr(args, "pr_url", "") or "").strip():
+            print("Error: pass --pr-url or --pr-waived, not both", file=sys.stderr)
+            return 1
+        ledger["pr_waived"] = pr_waived
+
     incident_waiver = (getattr(args, "incident_waiver", None) or "").strip()
     if incident_waiver:
         ledger["incident_waiver"] = incident_waiver
@@ -5072,6 +5092,8 @@ def cmd_update_phase(args: argparse.Namespace) -> int:
     pr_url = (getattr(args, "pr_url", "") or "").strip()
     if pr_url:
         content = stamp_pr_url_into_html(content, pr_url)
+    if pr_waived:
+        content = stamp_pr_waived_into_html(content, pr_waived)
 
     files_list = [f.strip() for f in (getattr(args, "files", "") or "").split(",") if f.strip()]
 
@@ -5205,6 +5227,10 @@ def cmd_update_phase(args: argparse.Namespace) -> int:
         ledger.setdefault("iterations", []).append(new_it)
     if transition_event:
         record_ledger_event(ledger, target_iter, transition_event)
+    if pr_waived:
+        waived_text = f"PR waived by the human: {pr_waived}"
+        content, _ = append_progress_log(content, phase_key, target_iter, "decision", waived_text)
+        record_ledger_event(ledger, target_iter, {"ts": now_iso(), "phase": phase_key, "kind": "decision", "text": waived_text})
     if incident_waiver:
         waiver_text = f"Incident waiver: {incident_waiver}"
         content, _ = append_progress_log(content, phase_key, target_iter, "decision", waiver_text)
@@ -6973,6 +6999,7 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--file-note", action="append", help="Per-file 'Why This File Changed' explanation (format: 'path/to/file.js=Explanation' or JSON dict; repeatable)")
     up.add_argument("--repo-dir", action="append", help="Explicit git repository/worktree directory (repeatable for multi-repo diffs; defaults to body[data-worktree])")
     up.add_argument("--pr-url", help="GitHub Pull Request URL to stamp on <body> and render in the header & phase card")
+    up.add_argument("--pr-waived", dest="pr_waived", help="The human chose at the pre-PR gate to land without a PR: stamp data-pr-waived=<reason> on <body>, so friction-scan doesn't report missing-pr. Never on the agent's own judgement")
     up.add_argument("--session-id", dest="session_id", help="Optional session ID to bind onto <body data-session-id>")
     up.add_argument("--transcript", help="Session transcript for the Phase 4 friction scan (default: found from data-session-id)")
     up.add_argument("--incident-waiver", dest="incident_waiver", help="Explicit Phase 4 waiver reason when mid-flight incidents/failed checks do not require a Mímir Harness Delta")

@@ -6,7 +6,7 @@ by an assumption. This module reads the state file and, when it can find one, th
 returns the failures it can prove, each with evidence.
 
 Findings (stable ids, used by the Phase 4 gate):
-- missing-pr: Heimdall is done, but no PR is linked.
+- missing-pr: Heimdall is done, but no PR is linked and the human didn't waive one (data-pr-waived).
 - gate-ignored: a dashboard decision woke the session, and the turn ended without acting on it
   (ground rule 8). The human then had to answer the same gate again in chat.
 - gate-unwatched: a phase was set to awaiting_human, and the turn ended without arming wait-for-human
@@ -233,6 +233,8 @@ def missing_pr(content: str) -> list[dict]:
     if not heimdall or not re.search(r'data-status=["\']done["\']', heimdall.group(0)):
         return []
     if re.search(r'\bdata-pr-url=["\']https?://', content):
+        return []
+    if re.search(r'<body\b[^>]*\bdata-pr-waived=["\'][^"\']+', content, re.I):  # the human chose no PR
         return []
     return [{"id": "missing-pr", "evidence": "Heimdall is done and no data-pr-url is stamped"}]
 
