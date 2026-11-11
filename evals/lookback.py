@@ -25,7 +25,7 @@ sys.path.insert(0, str(EVALS.parent / "skills" / "odin" / "scripts"))
 import odin_friction as F  # noqa: E402
 
 TYPES = ["missing-pr", "gate-nudged", "state-file-late"]
-DETECTS = {"missing-pr": {"missing-pr"}, "gate-nudged": {"gate-ignored", "gate-unwatched"},
+DETECTS = {"missing-pr": {"missing-pr"}, "gate-nudged": {"gate-ignored", "gate-unwatched", "asked-in-chat"},
            "state-file-late": {"state-file-late"}}
 KEYWORDS = {  # what a written delta or waiver about each failure would say
     "missing-pr": ("pull request", " pr ", "pr gate", "pre-pr", "remote", "gh pr", "missing-pr"),

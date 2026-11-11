@@ -72,6 +72,8 @@ class NudgeTest(unittest.TestCase):
         cmd = R.build_cmd(CASE, "gated", ARGS)
         r = R.resume_cmd(cmd, "sess-1", R.NUDGE)
         self.assertEqual(r[r.index("-p") + 1], R.NUDGE)
+        # It confirms the decision without choosing for the agent (lookback re-run).
+        self.assertNotIn("default", R.NUDGE.lower())
         self.assertEqual(r[-2:], ["--resume", "sess-1"])
         self.assertIn("--plugin-dir", r)
         self.assertEqual(cmd[cmd.index("-p") + 1].split()[0], "/odin:odin")  # original untouched

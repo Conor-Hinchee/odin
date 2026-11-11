@@ -52,7 +52,11 @@ PLAIN_SUFFIX = (
 # Keep the user's own ~/.claude settings, plugins, hooks and MCP servers out of every arm.
 ISOLATION = ["--setting-sources", "project,local", "--strict-mcp-config"]
 # What a user types when Odin stops at a gate and asks in chat for an approval the dashboard already gave.
-NUDGE = "Yes, that approval in the dashboard was mine. Go ahead, and go with the defaults you recommended."
+# The nudge confirms the dashboard decision and nothing else. It used to add "go with the defaults you
+# recommended", which answered questions the partner never read (lookback re-run: an agent asked whether to
+# waive a PR, and took that as yes).
+NUDGE = ("Yes, that decision in the dashboard was mine. I haven't answered anything else you asked: "
+         "decide it yourself, within Odin's rules.")
 MAX_NUDGES = 3
 FAKE_REMOTE = "https://github.com/eval-sandbox/shop.git"
 GIT_ID = ["-c", "user.name=eval", "-c", "user.email=eval@example.invalid"]
@@ -680,6 +684,7 @@ def main() -> int:
     (run_dir / "run.json").write_text(json.dumps({
         "run_id": run_id, "cases": ids, "reps": args.reps, "mode": args.mode, "model": args.model,
         "odin_dir": args.odin_dir, "odin_ref": odin_ref, "started": datetime.datetime.now().isoformat(),
+        "nudge": NUDGE,
     }, indent=2))
 
     trials = [(c, c["mode"] if args.mode == "case" else args.mode, r)

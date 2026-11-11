@@ -11,6 +11,8 @@ Findings (stable ids, used by the Phase 4 gate):
   (ground rule 8). The human then had to answer the same gate again in chat.
 - gate-unwatched: a phase was set to awaiting_human, and the turn ended without arming wait-for-human
   (ground rule 7), so a dashboard decision had nowhere to go and the human had to answer in chat.
+- asked-in-chat: a turn ended on a question to the human with no watcher live and no phase at awaiting_human
+  (ground rule 7), so the only way to answer was chat, outside the dashboard and the state file.
 - state-file-late: project files were read before the state file was created (ground rule 1).
 
 Transcripts are Claude Code session JSONL (~/.claude/projects/<project>/<session-id>.jsonl) or
@@ -41,6 +43,7 @@ FINDING_TEXT = {
     "gate-ignored": "a dashboard decision woke the session, and the turn ended without acting on it",
     "gate-unwatched": "a phase paused at awaiting_human, and the turn ended without arming wait-for-human",
     "state-file-late": "project files were read before the state file existed",
+    "asked-in-chat": "a turn ended on a question to the human without pausing at awaiting_human or arming wait-for-human",
 }
 
 
@@ -81,7 +84,8 @@ def _result_text(block: dict) -> str:
 
 
 def steps(events: list[dict]) -> list[tuple]:
-    """Flatten a transcript into ordered steps: ("tool", name, input), ("result", text), ("turn_end",)."""
+    """Flatten a transcript into ordered steps: ("tool", name, input), ("text", assistant text), ("result", text),
+    ("turn_end",)."""
     out: list[tuple] = []
     for ev in events:
         t = ev.get("type")
@@ -92,6 +96,8 @@ def steps(events: list[dict]) -> list[tuple]:
             for b in _blocks(ev):
                 if isinstance(b, dict) and b.get("type") == "tool_use":
                     out.append(("tool", b.get("name") or "", b.get("input") or {}))
+                elif isinstance(b, dict) and b.get("type") == "text" and str(b.get("text") or "").strip():
+                    out.append(("text", str(b["text"])))
             # Session JSONL has no result events: an assistant message that ends the turn marks it.
             if (ev.get("message") or {}).get("stop_reason") == "end_turn" and "uuid" in ev:
                 out.append(("turn_end",))
@@ -146,6 +152,31 @@ def gate_unwatched(seq: list[tuple]) -> list[dict]:
                 phase = re.search(r"--phase[ =]['\"]?([\w-]+)", cmd)
                 return [{"id": "gate-unwatched", "evidence": f"{phase.group(1) if phase else 'a phase'} was set to "
                          "awaiting_human, and the turn ended with no wait-for-human"}]
+    return []
+
+
+def asked_in_chat(seq: list[tuple]) -> list[dict]:
+    """A turn that ends on a question with nobody watching the dashboard. Turns with a pause set, or with a
+    wakeup nobody acted on, are left to gate-unwatched and gate-ignored."""
+    watching, paused, woke, last_text = False, False, False, ""
+    for s in seq:
+        if s[0] == "tool":
+            cmd = _command(s[2])
+            if "wait-for-human" in cmd:
+                watching = True
+            elif "odin-state" in cmd and AWAIT.search(cmd):
+                paused = True
+            elif "odin-state" in cmd and ACT.search(cmd):
+                woke = False  # the wakeup was acted on, so a later question is a new one
+        elif s[0] == "result" and WAKEUP_MARKER in s[1]:
+            watching, woke = False, True
+        elif s[0] == "text":
+            last_text = s[1]
+        elif s[0] == "turn_end":
+            if not watching and not paused and not woke and "?" in last_text:
+                q = next((ln.strip() for ln in reversed(last_text.splitlines()) if "?" in ln), "")
+                return [{"id": "asked-in-chat", "evidence": f"the turn ended on \"{q[:160]}\" with no watcher live"}]
+            paused, woke, last_text = False, False, ""
     return []
 
 
@@ -255,7 +286,8 @@ def scan(content: str, state_path: Path | None = None, transcript: Path | None =
         if state_path is not None:
             roots.append(state_path.resolve().parent.parent)
         skill_dir = Path(__file__).resolve().parent.parent
-        findings += gate_ignored(seq)[:1] + gate_unwatched(seq) + state_file_late(seq, roots, skill_dir)
+        findings += (gate_ignored(seq)[:1] + gate_unwatched(seq) + asked_in_chat(seq)
+                     + state_file_late(seq, roots, skill_dir))
     seen, out = set(), []
     for f in findings:
         if f["id"] not in seen:

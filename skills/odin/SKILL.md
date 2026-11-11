@@ -157,7 +157,7 @@ graph TD
   ```bash
   python3 "$ODIN/odin-state.py" friction-scan --file "odin-states/<task-slug>.html"
   ```
-  It lists each failure with an id and evidence (a missing PR, a dashboard decision not acted on, a pause with no watcher, project files read before the state file). Address every finding: a `propose-delta` whose `--failure-pattern` starts with the id, or `--incident-waiver "<id>: <reason>"` when it needs no harness change.
+  It lists each failure with an id and evidence (a missing PR, a dashboard decision not acted on, a pause with no watcher, a question asked in chat without pausing, project files read before the state file). Address every finding: a `propose-delta` whose `--failure-pattern` starts with the id, or `--incident-waiver "<id>: <reason>"` when it needs no harness change.
 - In `#hlidskjalf-judge`, review plan adherence, subagent efficiency, and what slowed the task down. Then ask the question the scan can't: **did you substitute or skip any required step on an assumption you didn't check?** ("The remote looks local, so no PR" is one.) If so, that's a delta.
 - If the task needed more than one iteration, had a Heimdall rejection, or exposed a reusable gap in a skill, rule or script, record a **harness delta proposal**:
   ```bash

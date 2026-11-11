@@ -85,7 +85,7 @@ Here's what I'd tell anyone building agent evals: **audit the transcripts before
 - **The protocol checker had false positives.** A chat nudge wasn't counted as the approval it was, and a multi-line plan containing the words "(git rm)" was read as a deletion. Shell splitting is now quote-aware.
 - **PR bodies written to a file were invisible.** Some agents passed `--body-file`, which the fake `gh` logged only as a path, so the judge would have scored a good description as empty. It now keeps a copy.
 
-Each fix has a regression test. All of them are free to run: 76 tests for the eval harness and 81 for Odin.
+Each fix has a regression test. All of them are free to run: 76 tests for the eval harness and 83 for Odin.
 
 ## Limitations
 

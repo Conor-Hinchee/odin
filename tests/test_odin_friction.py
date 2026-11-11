@@ -100,6 +100,33 @@ class FrictionScanTest(unittest.TestCase):
                   bash("python3 odin-state.py wait-for-human --phase huginn-plan"), end_turn_session()]
         self.assertEqual(self.scan(events), [])
 
+    # asked-in-chat
+    def text(self, t):
+        return {"type": "assistant", "message": {"content": [{"type": "text", "text": t}]}}
+
+    def test_asked_in_chat_when_a_question_ends_an_unwatched_turn(self):
+        events = [result(WAKE), bash("python3 odin-state.py update-phase --phase heimdall --status active"),
+                  self.text("origin is a local remote, so I can't open a PR.\nWaive the PR, or keep the branch?"),
+                  end_turn_stream()]
+        found = F.scan(state_html(), self.state, self.write(events))
+        self.assertEqual([f["id"] for f in found], ["asked-in-chat"])
+        self.assertIn("Waive the PR, or keep the branch?", found[0]["evidence"])
+
+    def test_no_asked_in_chat_when_watched_paused_or_not_a_question(self):
+        watched = [bash("python3 odin-state.py wait-for-human --phase huginn-plan"), self.text("Approve the plan?"),
+                   end_turn_stream()]
+        statement = [self.text("Done. All tests pass."), end_turn_stream()]
+        unacted = [result(WAKE), self.text("Was that you?"), end_turn_stream()]  # gate-ignored's case
+        self.assertEqual(self.scan(watched), [])
+        self.assertEqual(self.scan(statement), [])
+        self.assertEqual(self.scan(unacted), ["gate-ignored"])
+
+    def write(self, events):
+        tr = self.root / "transcript.jsonl"
+        tr.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+        self.state.write_text(state_html())
+        return tr
+
     # state-file-late
     def test_state_file_late_when_project_read_first(self):
         events = [tool("Read", file_path=str(self.root / "app.py")), bash("cat pkg/*.py"),
