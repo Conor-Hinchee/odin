@@ -4,7 +4,7 @@ Odin is a Claude Code plugin that runs development tasks through a fixed loop: a
 
 **Short version:** on small, well-specified tasks, plain Claude Code got the same correct result at a quarter of the cost and time. The eval found two real defects in Odin, and one of them is now fixed and re-measured. Most of the work, though, went into finding bugs in the harness itself. Five of them would have changed a headline number. A second experiment then tried to give Odin's plan review something to catch, and couldn't: plain Claude Code read all six hand-built traps correctly on its own.
 
-About $24 of API spend in all, every run of both experiments included.
+About $29 of API spend in all, every run included.
 
 ## The harness
 
@@ -85,7 +85,7 @@ Here's what I'd tell anyone building agent evals: **audit the transcripts before
 - **The protocol checker had false positives.** A chat nudge wasn't counted as the approval it was, and a multi-line plan containing the words "(git rm)" was read as a deletion. Shell splitting is now quote-aware.
 - **PR bodies written to a file were invisible.** Some agents passed `--body-file`, which the fake `gh` logged only as a path, so the judge would have scored a good description as empty. It now keeps a copy.
 
-Each fix has a regression test. All of them are free to run: 74 tests for the eval harness and 79 for Odin.
+Each fix has a regression test. All of them are free to run: 76 tests for the eval harness and 81 for Odin.
 
 ## Limitations
 
@@ -107,7 +107,7 @@ The useful result is the boundary it draws. On a single ambiguous decision where
 
 Odin's retrospective (Hlidskjalf) is where harness failures are meant to become fixes. Scored offline against ground truth from the runner and the protocol checker, it had caught **none** of the 22 known failures in Experiments 1 and 2: missing PRs, ignored dashboard approvals, files read before the state file existed. It reads only the state file, and most of those failures never reach it.
 
-A new `friction-scan` reads the local session transcript as well, and the Phase 4 gate now blocks until every finding is named in a delta or a waiver. It surfaces 22/22 on the trials it was developed on, and **19/21 with 2 false positives on 25 trials it had never seen**. All four disagreements trace to a fake-`gh` bug and a bookkeeping gap in the older runs. Details: [LOOKBACK.md](LOOKBACK.md). Whether the agent then writes a good fix for each finding still needs a paid run.
+A new `friction-scan` reads the local session transcript as well, and the Phase 4 gate now blocks until every finding is named in a delta or a waiver. It surfaces 22/22 on the trials it was developed on, and **19/21 with 2 false positives on 25 trials it had never seen**. All four disagreements trace to a fake-`gh` bug and a bookkeeping gap in the older runs. Details: [LOOKBACK.md](LOOKBACK.md). A paid re-run of Experiment 1's Odin arm ($5) then tried to measure whether the agent writes good fixes once the gate fires. It mostly couldn't, because the failures had become rare: trials closed without a PR dropped from 7/18 to 1/18 (p = 0.04, not pre-registered). Of the 3 that remained, the retrospective caught 1. The other 2 trace to the scripted partner answering a question it never read, and to a pattern the scan doesn't detect yet. All 3 deltas the agents wrote named a real cause in general terms. Two of them found another fake-`gh` bug, now fixed.
 
 ## Next
 

@@ -40,7 +40,7 @@ def opened_pr(row: dict, trial: Path) -> bool:
     if row.get("opened_pr") is not None:
         return bool(row["opened_pr"])
     log = trial / "gh.log"
-    return log.exists() and any("pr create" in l and "--help" not in l for l in log.read_text().splitlines())
+    return log.exists() and any("pr create" in l and "--help" not in l and "--dry-run" not in l for l in log.read_text().splitlines())
 
 
 def retro_started(row: dict) -> bool:

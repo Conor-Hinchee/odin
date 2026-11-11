@@ -124,6 +124,35 @@ class FakeGhTest(unittest.TestCase):
         sh("gh", "pr", "edit", "1", "--body-file", str(d / "b.md"))
         self.assertTrue((d / "gh-bodies" / "b.md").exists())
 
+    def test_pr_create_uses_head(self):
+        """An agent on main that runs `pr create --head feat/y` opens the PR for feat/y, like the real gh."""
+        import os
+        import subprocess
+        d = Path(tempfile.mkdtemp())
+        env = {**os.environ, "PATH": f"{EVALS / 'bin'}:{os.environ['PATH']}", "ODIN_EVAL_GH_LOG": str(d / "gh.log")}
+        sh = lambda *a: subprocess.run(a, cwd=d, env=env, capture_output=True, text=True)  # noqa: E731
+        sh("git", "init", "-q", "-b", "main")
+        sh("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i")
+        sh("git", "branch", "feat/y")
+        self.assertEqual(sh("gh", "pr", "create", "--base", "main", "--head", "feat/y", "--fill").returncode, 0)
+        self.assertEqual(sh("gh", "pr", "view").returncode, 1, "no PR for main")
+        self.assertEqual(sh("gh", "pr", "create", "--head=feat/y", "--fill").returncode, 1, "already exists for feat/y")
+        sh("git", "checkout", "-q", "feat/y")
+        self.assertIn("pull/1", sh("gh", "pr", "view", "--json", "url").stdout)
+
+    def test_dry_run_creates_nothing(self):
+        import os
+        import subprocess
+        d = Path(tempfile.mkdtemp())
+        env = {**os.environ, "PATH": f"{EVALS / 'bin'}:{os.environ['PATH']}", "ODIN_EVAL_GH_LOG": str(d / "gh.log")}
+        sh = lambda *a: subprocess.run(a, cwd=d, env=env, capture_output=True, text=True)  # noqa: E731
+        sh("git", "init", "-q", "-b", "feat/z")
+        sh("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i")
+        self.assertEqual(sh("gh", "pr", "create", "--dry-run", "--fill").returncode, 0)
+        self.assertEqual(sh("gh", "pr", "view").returncode, 1)
+        self.assertFalse(R.PR_CREATE.search("gh pr create --dry-run --fill"))
+        self.assertEqual(sh("gh", "pr", "create", "--fill").returncode, 0)
+
 
 class IsolationTest(unittest.TestCase):
     def test_instruction_files_above_a_trial_are_found(self):

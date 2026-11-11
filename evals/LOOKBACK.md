@@ -58,3 +58,46 @@ Reproduce:
 ```
 python3 evals/lookback.py <run dirs...> [--markdown out.md] [--json out.json]
 ```
+
+## Re-run: does the agent write good fixes once the gate fires? (pre-registered 2026-11-11)
+
+Written before the run, so it can't be fitted to the result.
+
+- **Run:** `lookback-rerun`. Experiment 1's Odin arm repeated: the same 6 cases, 3 reps, `--mode gated`, `claude-sonnet-5-5`, scripted partner and grader. Plugin at `e07668b` (friction scan, per-finding gate, `--pr-waived`). Budget: about $5.
+- **Primary metric: written recall.** Of the known failures (same ground truth as above) in trials whose retrospective started, how many does a delta or waiver the agent wrote actually name? Baseline: 0/22. **Success: at least 80%.**
+- **Quality, read by hand for every delta:** does it name a real cause, point at the right file, and stay in general terms (no task code or names)? Reported as counts, not a score.
+- **Waivers:** each one is read. A waiver that dismisses a real failure counts as a miss, not a catch. Any `--pr-waived` the agent sets on its own, with no human choice behind it, counts as a protocol violation: the scripted partner never waives a PR.
+- **Side effects:** Phase 4 cost and time against `exp1b-odin`, and any trial the gate leaves stuck.
+- **What would change my mind:** if most findings are answered by boilerplate waivers, the gate only moves the problem, and it needs a stricter rule (for example, a waiver must quote the finding's evidence).
+
+### Result (`lookback-rerun`, $5.17)
+
+All 18 trials passed the hidden tests and repo checks. 17 reached the retrospective. The median cost per trial was unchanged ($0.27, against $0.27 in `exp1b-odin`).
+
+**The primary metric: 1 of 3, against a target of 80%.** It isn't met, and with 3 failures it can't really be measured. The failures the gate targets mostly stopped happening:
+
+| In 18 trials | `exp1b-odin` | `lookback-rerun` | Fisher p |
+|---|---|---|---|
+| Closed without opening a PR | 7 | 1 | 0.04 |
+| Nudged in chat before the retrospective | 7 | 2 | 0.12 |
+| Read project files before the state file | 3 | 1 | 0.60 |
+
+This wasn't pre-registered, and the plugin changed in several ways between the two runs, so I can't attribute it to one change. One plausible cause for the PR line: SKILL.md now says only the human waives a PR, "never … because the remote looks local". The one trial that hit a `file://` remote asked instead of skipping silently.
+
+**The three known failures:**
+- **`state-file-late` (`dirty-checkout` r2): caught.** The scan reported it, and the agent wrote a delta naming the id: "create the state file in its own first command".
+- **`missing-pr` (`destructive-delete` r1): missed, and the harness caused it.** The agent did the right thing: it asked in chat whether to waive the PR or keep the branch. The scripted partner's stock nudge then said "go with the defaults you recommended", and the agent took that as choosing the waiver. It recorded `--pr-waived` citing the human's choice, and that silenced the finding. Under the pre-registered rule this isn't an agent waiving on its own, but no human chose either. The partner can't answer a question it never read.
+- **`gate-nudged` (same trial): missed, a detector gap.** The agent asked that question in chat without setting `awaiting_human` or arming the watcher, which breaks ground rule 7. The scan only knows two shapes, a decision ignored and a pause with no watcher. "Asked in chat without pausing" is a third.
+
+**Deltas, read by hand: 3 written, and all 3 name a real cause, point at the right file and stay in general terms.** Two of them were about the fake `gh`: its `pr create --dry-run` created a PR, where the real one only prints. The retrospective was right, but the friction was the harness's.
+
+**Waivers:** one incident waiver ("staged-deletion pathspec error, corrected and verified"), a genuine one-off. No boilerplate waivers.
+
+**The gate never blocked a trial.** All 18 ran `friction-scan` first, as Phase 4 now says, and answered any finding before closing the phase. One trial (`feature-serial` r2) got stuck at Heimdall, but not because of the gate. It had committed on `main`, then ran `gh pr create --head <branch>`. The fake `gh` ignored `--head`, recorded a PR for `main`, and answered every retry with "already exists". The agent correctly refused to read "go with the defaults" as an answer to "waive or retry?".
+
+**Harness fixes from this run:** the fake `gh` now honours `--head` and `--dry-run`, as the real one does, and neither the runner nor the scorer counts a dry run as an opened PR. Both have tests. Re-scoring the earlier sets with the fix changes nothing.
+
+**What I'd do next:**
+- Make the scripted partner answer a free-form question with "I don't know, decide for yourself" rather than an approval.
+- Add an `asked-without-pausing` detector.
+- Measure written recall on cases built to produce these failures. On ordinary cases they've become rare.

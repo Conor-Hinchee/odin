@@ -3,8 +3,16 @@
 # `pr view` / `pr list` only report a PR after `pr create` ran on that branch, like the real gh.
 LOG="${ODIN_EVAL_GH_LOG:-/dev/null}"
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+# Like the real gh, `pr create --head <branch>` opens the PR for that branch, not the one checked out.
+prev=""
+for a in "$@"; do
+  case "$prev" in --head|-H) BRANCH="$a" ;; esac
+  case "$a" in --head=*) BRANCH="${a#--head=}" ;; esac
+  prev="$a"
+done
 URL="https://github.example/eval/sandbox/pull/1"
-created() { [ -f "$LOG" ] && grep -q "\[branch=$BRANCH\] gh pr create" "$LOG"; }
+# A --dry-run or --help call creates nothing.
+created() { [ -f "$LOG" ] && grep "\[branch=$BRANCH\] gh pr create" "$LOG" | grep -v -e ' --dry-run' -e ' --help' | grep -q .; }
 had_pr=1
 created && had_pr=0
 echo "$(date -u +%FT%TZ) [branch=$BRANCH] gh $*" >> "$LOG"
@@ -18,6 +26,8 @@ for a in "$@"; do
 done
 case "$1 $2" in
   "pr create")
+    case " $* " in *" --dry-run "*|*" --help "*)  # like the real gh: print, create nothing
+      echo "Would have created a Pull Request with:"; exit 0 ;; esac
     if [ $had_pr -eq 0 ]; then
       echo "a pull request for branch \"$BRANCH\" into branch \"main\" already exists:" >&2
       echo "$URL" >&2

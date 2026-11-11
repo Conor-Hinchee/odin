@@ -72,8 +72,8 @@ def instructions_above(path: Path) -> list:
     return found
 
 
-# A real `gh pr create`, not `gh pr create --help` (Exp1: a help call was scored as an opened PR).
-PR_CREATE = re.compile(r"\bgh pr create\b(?!.*(?:\s--help\b|\s-h\b))")
+# A real `gh pr create`, not `--help` (Exp1: a help call was scored as an opened PR) or `--dry-run`.
+PR_CREATE = re.compile(r"\bgh pr create\b(?!.*(?:\s--help\b|\s-h\b|\s--dry-run\b))")
 
 
 def git(repo, *args, check=True):
