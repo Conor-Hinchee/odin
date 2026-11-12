@@ -6099,7 +6099,90 @@ def write_wakeup_event(
     if extra:
         payload.update(extra)
     wakeup_file.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    pause_file = states_dir / ".odin-paused.json"
+    if pause_file.exists():
+        try:
+            pause_data = json.loads(pause_file.read_text(encoding="utf-8"))
+            if isinstance(pause_data, dict) and pause_data.get("paused"):
+                set_pause_state(
+                    False,
+                    reason=f"Auto-resumed on human wakeup ({decision})",
+                    states_dir=states_dir,
+                )
+        except Exception:
+            pass
     return wakeup_file
+
+
+STALE_PAUSE_TTL_SECONDS = 4 * 3600
+
+
+def _parse_iso_timestamp(value: str | None) -> float | None:
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        return datetime.datetime.fromisoformat(value.strip().replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def _clear_stale_pause_if_needed(
+    states_dir: Path,
+    pause_info: dict,
+    wakeup_file: Path | None = None,
+    max_age_seconds: float | None = None,
+) -> bool:
+    """Return True and unpause if `.odin-paused.json` is stale or older than a pending wakeup."""
+    if not isinstance(pause_info, dict) or not pause_info.get("paused"):
+        return False
+
+    pause_file = states_dir / ".odin-paused.json"
+    pause_ts = _parse_iso_timestamp(pause_info.get("updatedAt"))
+    if pause_ts is None and pause_file.exists():
+        try:
+            pause_ts = pause_file.stat().st_mtime
+        except OSError:
+            pause_ts = None
+
+    if wakeup_file is not None and wakeup_file.exists():
+        wakeup_ts: float | None = None
+        try:
+            w_data = json.loads(wakeup_file.read_text(encoding="utf-8"))
+            if isinstance(w_data, dict):
+                wakeup_ts = _parse_iso_timestamp(w_data.get("timestamp"))
+        except Exception:
+            wakeup_ts = None
+        if wakeup_ts is None:
+            try:
+                wakeup_ts = wakeup_file.stat().st_mtime
+            except OSError:
+                wakeup_ts = None
+        if wakeup_ts is not None and (pause_ts is None or wakeup_ts >= pause_ts):
+            set_pause_state(
+                False,
+                reason="Auto-resumed on newer wakeup event",
+                states_dir=states_dir,
+            )
+            print(
+                f"Note: auto-cleared stale .odin-paused.json because a newer wakeup event arrived ({wakeup_file.name}).",
+                file=sys.stderr,
+            )
+            return True
+
+    if max_age_seconds is not None and pause_ts is not None:
+        if (time.time() - pause_ts) >= max_age_seconds:
+            set_pause_state(
+                False,
+                reason="Auto-expired stale pause state",
+                states_dir=states_dir,
+            )
+            print(
+                f"Note: auto-cleared stale .odin-paused.json from {pause_info.get('updatedAt') or 'earlier session'}.",
+                file=sys.stderr,
+            )
+            return True
+
+    return False
 
 
 def get_pause_state(states_dir: str | Path | None = None) -> dict:
@@ -6254,17 +6337,35 @@ def cmd_wait_for_human(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGTERM, on_sigterm)
     signal.signal(signal.SIGINT, lambda s, f: (cleanup_heartbeat(), sys.exit(0)))
 
+    initial_pause = get_pause_state(states_dir)
+    if initial_pause.get("paused"):
+        if not _clear_stale_pause_if_needed(
+            states_dir,
+            initial_pause,
+            wakeup_file=wakeup_file if wakeup_file.exists() else None,
+            max_age_seconds=STALE_PAUSE_TTL_SECONDS,
+        ):
+            print(
+                "Note: Odin watchers are currently paused (.odin-paused.json); "
+                "a new dashboard action will auto-resume.",
+                file=sys.stderr,
+            )
+
     write_heartbeat("armed")
     try:
         last_hb = 0.0
         while True:
             now_ts = time.time()
-            if now_ts - last_hb >= 2.0:
+            pause_info = get_pause_state(states_dir)
+            if pause_info.get("paused") and _clear_stale_pause_if_needed(
+                states_dir, pause_info, wakeup_file=wakeup_file
+            ):
                 pause_info = get_pause_state(states_dir)
+
+            if now_ts - last_hb >= 2.0:
                 write_heartbeat("paused" if pause_info.get("paused") else "armed")
                 last_hb = now_ts
 
-            pause_info = get_pause_state(states_dir)
             if not pause_info.get("paused") and wakeup_file.exists():
                 try:
                     raw = wakeup_file.read_text(encoding="utf-8")

@@ -144,6 +144,81 @@ HEREDOC_SUBSHELL_RE = re.compile(
     r"^\s*\$\(\s*cat\s+<<-?\s*['\"]?([A-Za-z0-9_]+)['\"]?\s*\r?\n([\s\S]*?)\r?\n[ \t]*\1\s*\)\s*$"
 )
 
+INLINE_QUOTED_HEREDOC_SUBSHELL_RE = re.compile(
+    r'"(\$\(\s*cat\s+<<-?\s*[\'"]?([A-Za-z0-9_]+)[\'"]?[ \t]*\r?\n[\s\S]*?\r?\n[ \t]*\2\s*\))"'
+    r"|(?<!\")(\$\(\s*cat\s+<<-?\s*['\"]?([A-Za-z0-9_]+)['\"]?[ \t]*\r?\n[\s\S]*?\r?\n[ \t]*\4\s*\))"
+)
+
+NL_SENTINEL = "__ODIN_NL_SEP__"
+
+
+def normalize_heredoc_subshells_for_shlex(cmd: str) -> str:
+    """Single-quote `\"$(cat <<'EOF'\\n...\\nEOF\\n)\"` blocks before `shlex.split`.
+
+    POSIX `shlex.split` does not track `$(...)` command-substitution nesting inside double
+    quotes, so any unescaped `\"` inside a heredoc body prematurely closes the outer `\"`
+    and corrupts tokenization. Wrapping the `$(cat <<...)` expression in `shlex.quote`
+    lets `shlex.split` tokenize it intact so `unwrap_heredoc_subshell` can unwrap it.
+    """
+    if not cmd or "<<" not in cmd:
+        return cmd
+
+    def _repl(match: re.Match) -> str:
+        inner = match.group(1) if match.group(1) is not None else match.group(3)
+        return shlex.quote(inner or "")
+
+    return INLINE_QUOTED_HEREDOC_SUBSHELL_RE.sub(_repl, cmd)
+
+
+def replace_top_level_newlines(cmd: str) -> str:
+    """Replace unquoted top-level newlines with `NL_SENTINEL` so `shlex.split` preserves line breaks between commands."""
+    if "\n" not in cmd:
+        return cmd
+    out: list[str] = []
+    in_single = False
+    in_double = False
+    escaped = False
+    paren_depth = 0
+    i = 0
+    n = len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if escaped:
+            out.append(ch)
+            escaped = False
+            i += 1
+            continue
+        if ch == "\\":
+            if not in_single:
+                escaped = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            out.append(ch)
+            i += 1
+            continue
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            out.append(ch)
+            i += 1
+            continue
+        if not in_single:
+            if ch == "(" and i > 0 and cmd[i - 1] == "$":
+                paren_depth += 1
+            elif ch == ")" and paren_depth > 0:
+                paren_depth -= 1
+        if ch == "\n" and not in_single and not in_double and paren_depth == 0:
+            if out and out[-1] == "\r":
+                out.pop()
+            out.append(f" {NL_SENTINEL} ")
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
 
 def unwrap_heredoc_subshell(text: str) -> tuple[str, bool]:
     """Unwrap `$(cat <<'EOF'\\n...\\nEOF\\n)` before shlex.quote re-quotes the token in single quotes."""
@@ -771,8 +846,12 @@ def handle_pre_tool_use(payload: dict) -> dict | None:
     )
     approved_summary = load_approved_prompt_summary(conversation_id, cwd)
 
+    # Unwrap quoted heredoc subshells (`"$(cat <<'EOF'...\nEOF)"`) before line-continuation
+    # and shlex parsing so inner double quotes inside the heredoc do not break shlex.split.
+    pre_heredoc_cmd = normalize_heredoc_subshells_for_shlex(cmd_line)
     # Normalize backslash-newline line continuations outside quotes before shlex.split
-    normalized_cmd = re.sub(r"\\\r?\n\s*", " ", cmd_line)
+    normalized_cmd = re.sub(r"\\\r?\n\s*", " ", pre_heredoc_cmd)
+    normalized_cmd = replace_top_level_newlines(normalized_cmd)
     try:
         tokens = shlex.split(normalized_cmd, posix=True)
     except ValueError:
@@ -789,18 +868,28 @@ def handle_pre_tool_use(payload: dict) -> dict | None:
             )
         return _noop(is_agy)
 
-    # Check if tokens contain shell chaining (`&&`, `;`, `||`); segment by operator
+    # Check if tokens contain shell chaining (`&&`, `;`, `||`) or top-level newlines; segment by operator
     segments: list[list[str]] = []
     operators: list[str] = []
     cur: list[str] = []
     for t in tokens:
-        if t in ("&&", "||", ";"):
-            segments.append(cur)
-            operators.append(t)
-            cur = []
+        if t in ("&&", "||", ";", NL_SENTINEL):
+            op_val = "\n" if t == NL_SENTINEL else t
+            if cur:
+                segments.append(cur)
+                operators.append(op_val)
+                cur = []
+            elif operators and op_val != "\n":
+                operators[-1] = op_val
         else:
             cur.append(t)
-    segments.append(cur)
+    if cur:
+        segments.append(cur)
+    while len(operators) >= len(segments) and operators:
+        operators.pop()
+
+    if not segments:
+        return _noop(is_agy)
 
     any_modified = False
     rebuilt_segments: list[str] = []
@@ -826,7 +915,10 @@ def handle_pre_tool_use(payload: dict) -> dict | None:
 
     rebuilt_cmd = rebuilt_segments[0]
     for op, seg_str in zip(operators, rebuilt_segments[1:]):
-        rebuilt_cmd = f"{rebuilt_cmd} {op} {seg_str}"
+        if op == "\n":
+            rebuilt_cmd = f"{rebuilt_cmd}\n{seg_str}"
+        else:
+            rebuilt_cmd = f"{rebuilt_cmd} {op} {seg_str}"
 
     if is_agy:
         return {
