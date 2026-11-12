@@ -1217,6 +1217,67 @@ class TestOdin(unittest.TestCase):
         self.assertIn("1. Curated Bullet 1: Disable verbatim prompt dumps", stdout_txt)
         self.assertIn("2. Curated Bullet 2: Curate prompt summary in Heimdall", stdout_txt)
 
+    def test_wait_for_human_auto_clears_stale_pause_on_newer_wakeup(self):
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+
+        states_dir = self.sample_html_path.parent
+        pause_file = states_dir / ".odin-paused.json"
+        # Simulate a stale pause file from days earlier
+        pause_file.write_text(
+            json.dumps(
+                {
+                    "paused": True,
+                    "reason": "Toggled via Odin UI",
+                    "updatedAt": "2020-01-01T00:00:00+00:00",
+                }
+            ),
+            encoding="utf-8",
+        )
+        wakeup_file = states_dir / f".odin-wakeup-{self.sample_html_path.stem}.json"
+        wakeup_file.write_text(
+            json.dumps(
+                {
+                    "slug": self.sample_html_path.stem,
+                    "file": str(self.sample_html_path),
+                    "decision": "approve_huginn",
+                    "phase": "huginn-plan",
+                    "notes": "Proceed",
+                    "selectedSkills": [],
+                    "approvedPromptSummary": [],
+                    "timestamp": "2026-11-12T10:13:19-05:00",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        wfh_args = argparse.Namespace(
+            html_file=str(self.sample_html_path),
+            file=str(self.sample_html_path),
+            phase="huginn-plan",
+            session_id="test-session-stale-pause",
+            timeout=1.0,
+            poll_interval=0.05,
+            consume_existing=True,
+        )
+        out_buf = io.StringIO()
+        err_buf = io.StringIO()
+        with redirect_stdout(out_buf), redirect_stderr(err_buf):
+            rc = self.odin_state.cmd_wait_for_human(wfh_args)
+        self.assertEqual(rc, 0)
+        self.assertIn("approve_huginn", out_buf.getvalue())
+        self.assertFalse(self.odin_state.get_pause_state(states_dir).get("paused"))
+
+        # Also verify write_wakeup_event auto-resumes when paused is True
+        self.odin_state.set_pause_state(True, reason="Manual pause", states_dir=states_dir)
+        self.assertTrue(self.odin_state.get_pause_state(states_dir).get("paused"))
+        self.odin_state.write_wakeup_event(
+            self.sample_html_path,
+            decision="approve_signoff",
+            phase="human-validation",
+        )
+        self.assertFalse(self.odin_state.get_pause_state(states_dir).get("paused"))
+
 
 if __name__ == "__main__":
     unittest.main()
