@@ -133,6 +133,7 @@ graph TD
 
 ### Phase 3: Heimdall (verify + pre-PR review gate)
 - Check the work against the testing strategy and Definition of Done.
+- For a change people will see (a new sprite, scene, screen or component), make at least one verification capture show the new piece beside something that already exists and that it will appear next to. A capture of the new piece alone can't show whether its scale, perspective or style match its surroundings.
 - When code changed, render the contextual diff and seed candidate `### Prompt Summary` bullets in the state file:
   ```bash
   python3 "$ODIN/odin-state.py" update-phase --file "odin-states/<task-slug>.html" \
