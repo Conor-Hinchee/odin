@@ -812,6 +812,53 @@ class TestOdin(unittest.TestCase):
         self.assertIn("odin-diff-row-has-comment", banner_script)
         self.assertIn("` \" + inline + \" `", banner_script)
 
+    def test_diff_viewer_mobile_layout(self):
+        """Phones get one readable unified column; desktop keeps the existing split/unified defaults."""
+        diff_styles = self.odin_state.ODIN_DIFF_STYLES
+        self.assertIn("@media (max-width: 760px)", diff_styles)
+        mobile = diff_styles[diff_styles.index("@media (max-width: 760px)"):]
+        # Auto shows unified on a phone unless the human switched the file (or the viewer) to split.
+        self.assertIn('.odin-diff-file-card:not([data-user-view-mode="split"]) .odin-diff-split-table { display: none; }', mobile)
+        self.assertIn('.odin-diff-viewer:not([data-view-mode="split"])', mobile)
+        # One line-number column in unified; deleted rows show their old number.
+        self.assertIn("td.odin-ln[data-old-ln]::after { content: attr(data-old-ln); }", mobile)
+        # 16px inputs stop iOS Safari zooming on focus.
+        self.assertIn("font-size: 16px !important;", mobile)
+        # The wrap toggle is hidden outside the phone breakpoint, so desktop is unchanged.
+        self.assertLess(diff_styles.index(".odin-diff-wrap-btn { display: none; }"), diff_styles.index("@media (max-width: 760px)"))
+        self.assertIn('.odin-diff-viewer[data-wrap="off"]', diff_styles)
+        self.assertIn("@media (hover: none)", diff_styles)
+
+        banner_script = self.odin_state.ODIN_TOP_BANNER_SCRIPT
+        self.assertIn('window.matchMedia("(max-width: 760px)")', banner_script)
+        self.assertIn("resolveAutoFileMode", banner_script)
+        self.assertIn('card.setAttribute("data-user-view-mode", next);', banner_script)
+        self.assertIn('card.removeAttribute("data-user-view-mode");', banner_script)
+        self.assertIn("data-odin-toggle-wrap", banner_script)
+        self.assertIn('"odin_diff_wrap"', banner_script)
+
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            for cmd in (["git", "init", "-b", "main"], ["git", "config", "user.name", "T"],
+                        ["git", "config", "user.email", "t@example.com"]):
+                subprocess.run(cmd, cwd=str(repo), check=True, capture_output=True)
+            (repo / "app.py").write_text("a = 1\nb = 2\n", encoding="utf-8")
+            subprocess.run(["git", "add", "app.py"], cwd=str(repo), check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), check=True, capture_output=True)
+            (repo / "app.py").write_text("a = 1\nb = 3\n", encoding="utf-8")
+
+            diff_html = self.odin_state.generate_contextual_diff_html(str(repo))
+            # Small diffs still default to split (desktop behaviour unchanged).
+            self.assertIn('data-default-view-mode="split"', diff_html)
+            # The deleted row's empty new-line cell carries the old line number for the phone layout.
+            self.assertIn('<td class="odin-ln odin-ln-del" data-old-ln="2"></td>', diff_html)
+            # Toolbar labels have long parts the phone layout hides.
+            self.assertIn('<span class="odin-diff-btn-long">', diff_html)
+            self.assertIn('class="odin-diff-toolbar-info"', diff_html)
+
     def test_contextual_diff_excludes_sensitive_files_and_prefers_branch_diff(self):
         self.assertTrue(self.odin_state._is_sensitive_diff_path(".env"))
         self.assertTrue(self.odin_state._is_sensitive_diff_path("sub/dir/.env.local"))
