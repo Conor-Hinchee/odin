@@ -10,6 +10,7 @@ All commands are `python3 "${CLAUDE_SKILL_DIR}/scripts/odin-state.py" <command> 
 | `set-env` | Restamp `data-branch`/`data-worktree`/`data-*-port` and the header env bar, and log the change | `--branch`, `--worktree`, `--app-port`, `--backend-port`, `--reason` |
 | `step-back` | Start iteration N+1 after a rejection or follow-up; earlier cards are kept | `--reason` (required), `--root-cause`, `--source {human,ci,heimdall}` |
 | `wait-for-human` | Block until the human acts in the dashboard, then print the wakeup JSON and exit. One per task: a newer watcher stops the older one; refuses to start if stdout is `/dev/null` | `--phase`, `--session-id`, `--timeout`, `--consume-existing` |
+| `stop-watcher` | Stop an armed `wait-for-human` watcher when the human answers in chat instead (verifies the PID is that task's watcher before sending `SIGTERM`) | `--file` |
 | `friction-scan` | List the harness failures a phase 4 retrospective must answer, each with an id and evidence: `missing-pr` (Heimdall done, no PR linked, none waived), `gate-ignored` (a dashboard decision woke the session and the turn ended without acting on it), `gate-unwatched` (a pause at `awaiting_human` with no `wait-for-human`), `asked-in-chat` (a turn ended on a question with no watcher live and no pause set), `state-file-late` (project files read before the state file existed). Reads the state file and the local session transcript; nothing leaves the machine | `--transcript` (default: found from `data-session-id` under `~/.claude/projects`), `--json` |
 | `update-phase --phase hlidskjalf --status done` | Blocks on open incidents and failed checks, and on every `friction-scan` finding whose id no delta or waiver names | `--incident-waiver "<id>: <reason>"`, `--transcript` |
 | `propose-delta` | Record a phase 4 harness delta proposal | `--id` (required), `--category`, `--target-path`, `--failure-pattern`, `--proposed-diff`, `--priority {p0,p1,p2}` |
@@ -41,7 +42,7 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/odin-server.py" --dir <root> [--port 8788] 
 
 ## Config
 
-`python3 "${CLAUDE_SKILL_DIR}/scripts/odin_config.py"` prints the merged config; `--url` prints just the live server's base URL. Keys: `root`, `ports`, `server` (`host`, `cert`, `key`, `allowed_hosts`), `repos`, `skill_pills`, `telemetry`, `pr`, `staging`, `progress`. See `odin.config.example.json` in the repository.
+`python3 "${CLAUDE_SKILL_DIR}/scripts/odin_config.py"` prints the merged config; `--url` prints just the live server's base URL. Keys: `root`, `ports`, `server` (`host`, `cert`, `key`, `allowed_hosts`, `token` / `$ODIN_TOKEN`), `repos`, `skill_pills`, `skills_allow_custom`, `telemetry`, `pr`, `staging`, `progress`. See `odin.config.example.json` in the repository.
 
 `telemetry.command` is any shell command that prints a JSON array of row objects. The dashboard shows it as a table, with one row per object, `name` as the row label, and `columns: [{key, label}]` choosing the columns. A row named `latest` becomes the reference that other rows are compared to.
 

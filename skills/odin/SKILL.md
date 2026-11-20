@@ -87,7 +87,7 @@ python3 "$ODIN/odin-state.py" wait-for-human \
   --session-id "<session id>"
 ```
 
-The dashboard then shows **🟢 PARTNER TURN**. When the human clicks Save & Launch Phase 2, Ask Huginn to Revise, Approve Code Diff & Open PR, Request Code Changes, or Sign Off / Reject, the watcher prints a wakeup JSON (`decision`, `notes`, `selectedSkills`) and exits. Claude Code and Antigravity re-invoke you when a background command exits, so the session resumes without copy-pasting. If `selectedSkills` lists skills (for example `/code-review`), invoke them at the start of the resumed turn. If the user answers in chat instead, stop the watcher.
+The dashboard then shows **🟢 PARTNER TURN**. When the human clicks Save & Launch Phase 2, Ask Huginn to Revise, Approve Code Diff & Open PR, Request Code Changes, or Sign Off / Reject, the watcher prints a wakeup JSON (`decision`, `notes`, `selectedSkills`) and exits. Claude Code and Antigravity re-invoke you when a background command exits, so the session resumes without copy-pasting. If `selectedSkills` lists skills (for example `/code-review`), invoke them at the start of the resumed turn. If the user answers in chat instead, stop the watcher with `python3 "$ODIN/odin-state.py" stop-watcher --file "odin-states/<task-slug>.html"`.
 
 ---
 
