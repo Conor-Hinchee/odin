@@ -449,6 +449,118 @@ class TestPrHook(unittest.TestCase):
         self.assertEqual(res_claude.returncode, 0)
         self.assertEqual(res_claude.stdout.strip(), "Odin session id: claude-sess-456")
 
+    def test_body_file_enriches_across_flags_and_harnesses_without_mutating_disk(self):
+        self.hook.configure({"label": "ai-generated"})
+        original_md = "## Summary\n- Support Rule #4 validation\n\n### Prompt Summary\n- add file flag support\n"
+        body_path = Path(self.tmp.name) / "pr-body.md"
+        body_path.write_text(original_md, encoding="utf-8")
+
+        for flag_expr in (
+            f'--body-file "{body_path}"',
+            f'--body-file="{body_path}"',
+            f'-F "{body_path}"',
+            f'-F"{body_path}"',
+        ):
+            with self.subTest(flag_expr=flag_expr):
+                cmd = f'gh pr create --title "Fix Rule #4" {flag_expr}'
+                out = self.hook.handle_pre_tool_use(self.payload(cmd))
+                hso = out["hookSpecificOutput"]
+                self.assertEqual(hso["permissionDecision"], "ask")
+                new_cmd = hso["updatedInput"]["command"]
+                self.assertIn("--label ai-generated", new_cmd)
+                self.assertIn("Fix Rule 4", new_cmd)
+                self.assertIn("--body ", new_cmd)
+                self.assertNotIn("--body-file", new_cmd)
+                self.assertNotIn(str(body_path), new_cmd)
+                self.assertIn("abc-session", new_cmd)
+                self.assertIn("Claude Code (claude-opus-5-5)", new_cmd)
+                # Caller's file on disk stays untouched during PreToolUse
+                self.assertEqual(body_path.read_text(encoding="utf-8"), original_md)
+
+        # Antigravity payload with --body-file
+        agy_out = self.hook.handle_pre_tool_use({
+            "conversationId": "agy-conv-789",
+            "transcriptPath": str(self.transcript),
+            "modelName": "Gemini 2.5 Pro",
+            "toolCall": {
+                "name": "run_command",
+                "args": {"CommandLine": f'gh pr create --title "Fix Step #9" --body-file "{body_path}"'},
+            },
+        })
+        self.assertEqual(agy_out["decision"], "allow")
+        agy_cmd = agy_out["overwrite"]["CommandLine"]
+        self.assertIn("--body ", agy_cmd)
+        self.assertNotIn("--body-file", agy_cmd)
+        self.assertIn("Fix Step 9", agy_cmd)
+        self.assertIn("agy-conv-789", agy_cmd)
+        self.assertEqual(body_path.read_text(encoding="utf-8"), original_md)
+
+    def test_body_file_relative_cwd_and_chained_cd_resolution(self):
+        self.hook.configure({"label": "ai-generated"})
+        sub = Path(self.tmp.name) / "nested" / "repo"
+        sub.mkdir(parents=True)
+        rel_md = sub / "pr.md"
+        rel_md.write_text("## Summary\n- Handle relative paths\n\n### Prompt Summary\n- resolve cwd\n", encoding="utf-8")
+
+        # 1. Resolved against payload["cwd"]
+        pl_cwd = {**self.payload("gh pr create --title t --body-file nested/repo/pr.md"), "cwd": self.tmp.name}
+        out_cwd = self.hook.handle_pre_tool_use(pl_cwd)
+        self.assertEqual(out_cwd["hookSpecificOutput"]["permissionDecision"], "ask")
+        self.assertIn("Handle relative paths", out_cwd["hookSpecificOutput"]["updatedInput"]["command"])
+
+        # 2. Resolved after chained `cd <subdir> && gh pr create -F pr.md`
+        pl_cd = {**self.payload("cd nested/repo && gh pr create --title t -F pr.md"), "cwd": self.tmp.name}
+        out_cd = self.hook.handle_pre_tool_use(pl_cd)
+        self.assertEqual(out_cd["hookSpecificOutput"]["permissionDecision"], "ask")
+        cd_cmd = out_cd["hookSpecificOutput"]["updatedInput"]["command"]
+        self.assertTrue(cd_cmd.startswith("cd nested/repo && gh pr create"))
+        self.assertIn("Handle relative paths", cd_cmd)
+        self.assertIn("abc-session", cd_cmd)
+
+    def test_body_file_denies_invalid_missing_or_stdin_on_create_and_handles_edit(self):
+        self.hook.configure({"label": "ai-generated"})
+
+        # 1. Missing ### Prompt Summary in --body-file
+        no_ps = Path(self.tmp.name) / "no-ps.md"
+        no_ps.write_text("## Summary\n- Only change notes\n", encoding="utf-8")
+        out_no_ps = self.hook.handle_pre_tool_use(self.payload(f'gh pr create --title t --body-file "{no_ps}"'))
+        self.assertEqual(out_no_ps["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("Prompt Summary", out_no_ps["hookSpecificOutput"]["permissionDecisionReason"])
+
+        # 2. Only ### Prompt Summary (missing change summary) in --body-file
+        only_ps = Path(self.tmp.name) / "only-ps.md"
+        only_ps.write_text("### Prompt Summary\n- fix it\n", encoding="utf-8")
+        out_only_ps = self.hook.handle_pre_tool_use(self.payload(f'gh pr create --title t -F "{only_ps}"'))
+        self.assertEqual(out_only_ps["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("says nothing about the change", out_only_ps["hookSpecificOutput"]["permissionDecisionReason"])
+
+        # 3. Nonexistent --body-file on gh pr create
+        missing_out = self.hook.handle_pre_tool_use(
+            self.payload(f'gh pr create --title t --body-file "{Path(self.tmp.name) / "does-not-exist.md"}"')
+        )
+        self.assertEqual(missing_out["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("Cannot read `--body-file", missing_out["hookSpecificOutput"]["permissionDecisionReason"])
+
+        # 4. --body-file - (stdin) on gh pr create
+        stdin_out = self.hook.handle_pre_tool_use(self.payload("gh pr create --title t --body-file -"))
+        self.assertEqual(stdin_out["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("stdin", stdin_out["hookSpecificOutput"]["permissionDecisionReason"])
+
+        # 5. gh pr edit --body-file strips Verbatim Session Prompts when disabled, and no-ops when clean
+        dirty_edit = Path(self.tmp.name) / "edit-dirty.md"
+        dirty_edit.write_text(
+            "## Summary\n- Updated notes\n\n<details>\n<summary>💬 Verbatim Session Prompts (1)</summary>\n1. hi\n</details>\n",
+            encoding="utf-8",
+        )
+        edit_out = self.hook.handle_pre_tool_use(self.payload(f'gh pr edit 12 --body-file "{dirty_edit}"'))
+        edit_cmd = edit_out["hookSpecificOutput"]["updatedInput"]["command"]
+        self.assertIn("--body ", edit_cmd)
+        self.assertNotIn("Verbatim Session Prompts", edit_cmd)
+
+        clean_edit = Path(self.tmp.name) / "edit-clean.md"
+        clean_edit.write_text("## Summary\n- Plain clean notes without hash refs\n", encoding="utf-8")
+        self.assertIsNone(self.hook.handle_pre_tool_use(self.payload(f'gh pr edit 12 --body-file "{clean_edit}"')))
+
 
 class TestServerGeneric(unittest.TestCase):
     @classmethod

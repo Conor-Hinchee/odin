@@ -9,8 +9,8 @@ Does nothing unless your Odin config has a "pr" block, e.g.:
 
 When enabled it:
 1. Adds `--label "<label>"` to `gh pr create` (if a label is configured).
-2. Denies `gh pr create` whose `--body` lacks a `### Prompt Summary` section (require_prompt_summary),
-   unless an active Odin state file has a Heimdall-curated `approved_prompt_summary`,
+2. Denies `gh pr create` whose `--body` (or `--body-file` / `-F`) lacks a `### Prompt Summary` section
+   (require_prompt_summary), unless an active Odin state file has a Heimdall-curated `approved_prompt_summary`,
    or when the body says nothing about the change beyond it (require_change_summary). The eval harness
    found Odin PR bodies that were only the Prompt Summary, so a GitHub reviewer learned nothing about the diff.
 3. Syncs `### Prompt Summary` with Heimdall's `approved_prompt_summary` when available, and appends a
@@ -491,6 +491,37 @@ def enrich_pr_body(
     return updated, changed
 
 
+def _resolve_body_file_path(raw_path: str, cwd: str | None = None) -> str:
+    """Resolve a `--body-file` / `-F` path against `~` and the effective working directory."""
+    expanded = os.path.expanduser(raw_path)
+    if os.path.isabs(expanded):
+        return os.path.normpath(expanded)
+    base = os.path.abspath(os.path.expanduser(cwd)) if cwd else os.getcwd()
+    return os.path.normpath(os.path.join(base, expanded))
+
+
+def _advance_cwd_for_cd_segment(tokens: list[str], current_cwd: str | None) -> str | None:
+    """Update effective working directory when a chained command segment runs `cd <dir>`."""
+    if not tokens or tokens[0] != "cd":
+        return current_cwd
+    idx = 1
+    while idx < len(tokens):
+        tok = tokens[idx]
+        if tok == "--":
+            idx += 1
+            break
+        if tok.startswith("-") and tok != "-":
+            idx += 1
+            continue
+        break
+    if idx >= len(tokens):
+        return os.path.expanduser("~")
+    target = tokens[idx]
+    if target == "-":
+        return current_cwd
+    return _resolve_body_file_path(target, current_cwd)
+
+
 def process_gh_command_tokens(
     tokens: list[str],
     conversation_id: str,
@@ -498,6 +529,7 @@ def process_gh_command_tokens(
     transcript_path: str = "",
     payload: dict | None = None,
     approved_summary: list[str] | None = None,
+    cwd: str | None = None,
 ) -> tuple[list[str] | None, str | None, bool]:
     """Inspect and enrich a single `gh pr create` or `gh pr edit` token list.
 
@@ -519,10 +551,19 @@ def process_gh_command_tokens(
     subcmd = tokens[gh_idx + 2]
     is_create = subcmd == "create"
 
+    effective_cwd = cwd
+    if effective_cwd is None and isinstance(payload, dict):
+        ws_paths = payload.get("workspacePaths")
+        effective_cwd = payload.get("cwd") or (
+            ws_paths[0] if isinstance(ws_paths, list) and ws_paths else None
+        )
+
     has_label = False
     body_idx: int | None = None
     body_inline_prefix: str | None = None
     body_val: str | None = None
+    body_file_span: tuple[int, int] | None = None
+    body_file_raw: str | None = None
 
     i = gh_idx + 3
     while i < len(tokens):
@@ -539,6 +580,7 @@ def process_gh_command_tokens(
             continue
         if tok in ("--body", "-b") and i + 1 < len(tokens):
             body_idx = i + 1
+            body_inline_prefix = None
             body_val = tokens[i + 1]
             i += 2
             continue
@@ -548,7 +590,53 @@ def process_gh_command_tokens(
             body_val = tok.split("=", 1)[1]
             i += 1
             continue
+        if tok in ("--body-file", "-F") and i + 1 < len(tokens):
+            body_file_span = (i, i + 2)
+            body_file_raw = tokens[i + 1]
+            i += 2
+            continue
+        if tok.startswith("--body-file="):
+            body_file_span = (i, i + 1)
+            body_file_raw = tok.split("=", 1)[1]
+            i += 1
+            continue
+        if tok.startswith("-F") and len(tok) > 2 and not tok.startswith("--"):
+            body_file_span = (i, i + 1)
+            body_file_raw = tok[2:]
+            i += 1
+            continue
         i += 1
+
+    if body_val is None and body_file_raw is not None:
+        if body_file_raw == "-":
+            if is_create and (REQUIRE_PROMPT_SUMMARY or REQUIRE_CHANGE_SUMMARY):
+                return (
+                    None,
+                    (
+                        "Cannot validate `--body-file -` (stdin) in `gh pr create`: write the PR body to a "
+                        "file path and pass `--body-file <path>`, or pass `--body` directly so Odin's "
+                        "PreToolUse hook can verify the summary and add session telemetry."
+                    ),
+                    False,
+                )
+        else:
+            resolved_body_path = _resolve_body_file_path(body_file_raw, effective_cwd)
+            try:
+                if not os.path.isfile(resolved_body_path):
+                    raise FileNotFoundError(resolved_body_path)
+                with open(resolved_body_path, "r", encoding="utf-8", errors="replace") as bf_handle:
+                    body_val = bf_handle.read()
+            except OSError:
+                if is_create and (REQUIRE_PROMPT_SUMMARY or REQUIRE_CHANGE_SUMMARY):
+                    return (
+                        None,
+                        (
+                            f"Cannot read `--body-file {body_file_raw}` (`{resolved_body_path}`): write the PR "
+                            "body file before running `gh pr create`, or pass `--body` directly so Odin's "
+                            "PreToolUse hook can verify the summary and add session telemetry."
+                        ),
+                        False,
+                    )
 
     if is_create and REQUIRE_CHANGE_SUMMARY and body_val is not None and not has_change_summary(body_val):
         return (
@@ -561,14 +649,8 @@ def process_gh_command_tokens(
             ),
             False,
         )
-    if approved_summary is None:
-        cwd = None
-        if isinstance(payload, dict):
-            ws_paths = payload.get("workspacePaths")
-            cwd = payload.get("cwd") or (
-                ws_paths[0] if isinstance(ws_paths, list) and ws_paths else None
-            )
-        approved_summary = load_approved_prompt_summary(conversation_id, cwd)
+    if approved_summary is None or (not approved_summary and effective_cwd):
+        approved_summary = load_approved_prompt_summary(conversation_id, effective_cwd)
 
     if is_create and REQUIRE_PROMPT_SUMMARY:
         if body_val is None or (not has_prompt_summary(body_val) and not approved_summary):
@@ -587,7 +669,7 @@ def process_gh_command_tokens(
                 None,
                 (
                     "Missing PR session telemetry: `gh pr create` must include a "
-                    "`### Prompt Summary` bullet list in `--body` summarizing the user prompts "
+                    "`### Prompt Summary` bullet list in `--body` or `--body-file` summarizing the user prompts "
                     f"for this PR. (The Odin PreToolUse hook then adds {hook_adds}"
                 ),
                 False,
@@ -617,8 +699,9 @@ def process_gh_command_tokens(
             continue
         t_idx += 1
 
-    if body_val is not None and body_idx is not None:
+    if body_val is not None and (body_idx is not None or body_file_span is not None):
         unwrapped_body, heredoc_unwrapped = unwrap_heredoc_subshell(body_val)
+        final_body: str | None = None
         if has_prompt_summary(unwrapped_body) or approved_summary:
             enriched_body, body_changed = enrich_pr_body(
                 unwrapped_body,
@@ -629,11 +712,7 @@ def process_gh_command_tokens(
                 approved_summary=approved_summary,
             )
             if body_changed or heredoc_unwrapped:
-                if body_inline_prefix:
-                    new_tokens[body_idx] = f"{body_inline_prefix}{enriched_body}"
-                else:
-                    new_tokens[body_idx] = enriched_body
-                modified = True
+                final_body = enriched_body
         else:
             san_body, b_changed = sanitize_non_issue_hash_refs(unwrapped_body)
             if not INCLUDE_VERBATIM_PROMPTS:
@@ -645,11 +724,18 @@ def process_gh_command_tokens(
                     san_body = padded_details_re.sub("\n\n", san_body).rstrip()
                     b_changed = True
             if b_changed or heredoc_unwrapped:
+                final_body = san_body
+
+        if final_body is not None:
+            if body_idx is not None:
                 if body_inline_prefix:
-                    new_tokens[body_idx] = f"{body_inline_prefix}{san_body}"
+                    new_tokens[body_idx] = f"{body_inline_prefix}{final_body}"
                 else:
-                    new_tokens[body_idx] = san_body
-                modified = True
+                    new_tokens[body_idx] = final_body
+            elif body_file_span is not None:
+                start, end = body_file_span
+                new_tokens[start:end] = ["--body", final_body]
+            modified = True
 
     if is_create and LABEL and not has_label:
         insert_pos = gh_idx + 3
@@ -804,6 +890,7 @@ def handle_pre_tool_use(payload: dict) -> dict | None:
 
     any_modified = False
     rebuilt_segments: list[str] = []
+    seg_cwd = cwd
     for seg in segments:
         new_seg, deny_reason, mod = process_gh_command_tokens(
             seg,
@@ -812,6 +899,7 @@ def handle_pre_tool_use(payload: dict) -> dict | None:
             transcript_path,
             payload,
             approved_summary=approved_summary,
+            cwd=seg_cwd,
         )
         if deny_reason:
             return _deny(deny_reason, is_agy)
@@ -820,6 +908,7 @@ def handle_pre_tool_use(payload: dict) -> dict | None:
         if mod or commit_mod:
             any_modified = True
         rebuilt_segments.append(" ".join(shlex.quote(x) for x in new_seg))
+        seg_cwd = _advance_cwd_for_cd_segment(new_seg, seg_cwd)
 
     if not any_modified:
         return _noop(is_agy)
