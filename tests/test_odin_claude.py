@@ -5,6 +5,7 @@ generic telemetry, body env attributes, and config-driven isolation."""
 import importlib.util
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -380,6 +381,37 @@ class TestPrHook(unittest.TestCase):
         self.hook.configure({"label": "ai-generated"})
         cmd = "git commit -m \"$(cat <<'EOF'\nfix: thing\nEOF\n)\""
         self.assertIsNone(self.hook.handle_pre_tool_use(self.payload(cmd)))
+
+    def test_multiline_commands_and_heredoc_with_inner_double_quotes(self):
+        self.hook.configure({"label": "ai-generated"})
+        cmd = (
+            "cd /tmp/some-repo\n"
+            "git push --no-verify -u origin feat/test\n\n"
+            "gh pr create \\\n"
+            "  --base main \\\n"
+            "  --head feat/test \\\n"
+            "  --title \"feat: recover 'Jane Doe' and \\\"1 Express Dr\\\"\" \\\n"
+            "  --body \"$(cat <<'EOF'\n"
+            "## Summary\n"
+            "- Handles mock \"Jane Doe\" and \"1 Express Dr\" shipping addresses.\n\n"
+            "### Prompt Summary\n"
+            "- Fix mock address recovery\n"
+            "EOF\n"
+            ")\""
+        )
+        out = self.hook.handle_pre_tool_use(self.payload(cmd))
+        rewritten = out["hookSpecificOutput"]["updatedInput"]["command"]
+        lines = [ln for ln in rewritten.splitlines() if ln.strip()]
+        self.assertTrue(lines[0].startswith("cd /tmp/some-repo"))
+        self.assertNotIn("git push", lines[0])
+        self.assertNotIn("gh pr create", lines[0])
+        self.assertTrue(lines[1].startswith("git push --no-verify -u origin feat/test"))
+        self.assertIn('Handles mock "Jane Doe" and "1 Express Dr" shipping addresses.', rewritten)
+        self.assertIn("--label ai-generated", rewritten)
+        # Ensure shlex can parse each top-level line of the rewritten command cleanly
+        for seg_line in rewritten.split("\n"):
+            if seg_line.strip().startswith("cd "):
+                self.assertEqual(shlex.split(seg_line), ["cd", "/tmp/some-repo"])
 
     def test_cli_fast_path_and_output(self):
         script = str(SCRIPTS / "odin-pr-hook.py")
