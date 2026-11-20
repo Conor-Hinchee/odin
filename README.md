@@ -95,7 +95,7 @@ Odin alerts you on every phase change in up to three places:
 
 ### Remote access
 
-The server listens only on `127.0.0.1` by default. To approve tasks from your phone or another computer, serve over HTTPS, or use a local domain like `https://odin.dev/`, see [docs/remote-access.md](docs/remote-access.md). **There is no authentication**: anyone who can reach the port can approve, reject or wake the agent, so only expose it on a network you trust.
+The server listens only on `127.0.0.1` by default. To approve tasks from your phone or another computer, serve over HTTPS, or use a local domain like `https://odin.dev/`, see [docs/remote-access.md](docs/remote-access.md). Before exposing the server on a network, set `server.token` (or `ODIN_TOKEN`) and open `/?token=<token>` once on each remote device; direct loopback requests stay zero-config.
 
 ## Configure (optional)
 
@@ -115,10 +115,11 @@ python3 skills/odin/scripts/odin_config.py
 |---|---|
 | `root` | Folder the dashboard scans (three levels deep) for `odin-states/` |
 | `ports` | `live` (8788) and `staging` (8789) |
-| `server` | `host` interface, optional TLS `cert`/`key`, and `allowed_hosts` for custom domains or reverse proxies |
+| `server` | `host` interface, optional TLS `cert`/`key`, `allowed_hosts` for custom domains or reverse proxies, and `token` (`$ODIN_TOKEN`) for network access |
 | `repos` | Repos `odin-isolate.py` may allocate worktrees and ports for (see [isolation](skills/odin/references/isolation.md)) |
 | `telemetry` | A command that prints a JSON array, shown as a table on the dashboard |
 | `skill_pills` | Skills offered as one-click pills when approving a plan |
+| `skills_allow_custom` | Whether `+ /custom-skill` can wake the agent with skills outside `skill_pills` (default `true`) |
 | `pr` | Turns on the PR hook: label, telemetry section, verbatim prompts, `Rule #12` → `Rule 12` |
 | `progress` | `capture: false` turns off automatic timeline logging |
 | `staging` | Paths for the `:8789` sandbox used to develop Odin itself |
