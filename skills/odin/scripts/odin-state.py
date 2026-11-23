@@ -4708,6 +4708,51 @@ def _collect_untracked_diff(worktree_dir: str, context_lines: int, files_filter:
     return "\n".join(chunks)
 
 
+def _tag_ancestor_if_closer(worktree_dir: str, candidate: str) -> str | None:
+    """Return nearest tag before HEAD when it is strictly closer than candidate's merge-base.
+
+    Tag-based hotfix branches diverge from older releases while origin/HEAD moves ahead;
+    comparing HEAD against origin/HEAD pulls in dozens of unrelated releases. If an ancestor
+    tag sits strictly between merge-base(candidate, HEAD) and HEAD, diff from that tag instead.
+    """
+    tag_res = subprocess.run(
+        ["git", "-C", worktree_dir, "describe", "--tags", "--abbrev=0", "HEAD~1"],
+        capture_output=True,
+        text=True,
+    )
+    if tag_res.returncode != 0 or not tag_res.stdout.strip():
+        return None
+    tag = tag_res.stdout.strip()
+
+    mb_res = subprocess.run(
+        ["git", "-C", worktree_dir, "merge-base", candidate, "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    if mb_res.returncode != 0 or not mb_res.stdout.strip():
+        return tag
+    merge_base = mb_res.stdout.strip()
+
+    tag_count = subprocess.run(
+        ["git", "-C", worktree_dir, "rev-list", "--count", f"{tag}..HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    mb_count = subprocess.run(
+        ["git", "-C", worktree_dir, "rev-list", "--count", f"{merge_base}..HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    if tag_count.returncode != 0 or mb_count.returncode != 0:
+        return None
+    try:
+        if int(tag_count.stdout.strip()) < int(mb_count.stdout.strip()):
+            return tag
+    except ValueError:
+        return None
+    return None
+
+
 def generate_contextual_diff_html(
     worktree_dir: str,
     context_lines: int = 12,
@@ -4716,22 +4761,53 @@ def generate_contextual_diff_html(
     files_filter: list[str] | None = None,
     show_pre_pr_banner: bool = False,
     pr_url: str = "",
+    diff_base: str = "",
 ) -> str:
     file_notes = file_notes or {}
-    cmd_base = ["git", "-C", worktree_dir, "diff", f"-U{context_lines}", "HEAD"]
-    if files_filter:
-        cmd_base.append("--")
-        cmd_base.extend(files_filter)
-
-    res = subprocess.run(cmd_base, capture_output=True, text=True)
-    raw_diff = _filter_sensitive_diff_blocks(res.stdout or "")
+    raw_diff = ""
     diff_source_label = "Working Tree vs. HEAD"
 
-    # When tracked working-tree changes exist, also include non-sensitive untracked files
-    if raw_diff.strip():
-        untracked_diff = _collect_untracked_diff(worktree_dir, context_lines, files_filter)
-        if untracked_diff.strip():
-            raw_diff = raw_diff.rstrip("\n") + "\n" + untracked_diff
+    if diff_base:
+        chk = subprocess.run(
+            ["git", "-C", worktree_dir, "rev-parse", "--verify", diff_base],
+            capture_output=True,
+            text=True,
+        )
+        if chk.returncode == 0:
+            ref_spec = f"{diff_base}...HEAD"
+            base_cmd = ["git", "-C", worktree_dir, "diff", f"-U{context_lines}", ref_spec]
+            if files_filter:
+                base_cmd.append("--")
+                base_cmd.extend(files_filter)
+            base_res = subprocess.run(base_cmd, capture_output=True, text=True)
+            filtered_base = _filter_sensitive_diff_blocks(base_res.stdout or "")
+            if not filtered_base.strip():
+                ref_spec = diff_base
+                wt_cmd = ["git", "-C", worktree_dir, "diff", f"-U{context_lines}", ref_spec]
+                if files_filter:
+                    wt_cmd.append("--")
+                    wt_cmd.extend(files_filter)
+                wt_res = subprocess.run(wt_cmd, capture_output=True, text=True)
+                filtered_base = _filter_sensitive_diff_blocks(wt_res.stdout or "")
+            if filtered_base.strip():
+                raw_diff = filtered_base
+                diff_source_label = f"Explicit Diff Base ({ref_spec})"
+
+    if not raw_diff.strip():
+        cmd_base = ["git", "-C", worktree_dir, "diff", f"-U{context_lines}", "HEAD"]
+        if files_filter:
+            cmd_base.append("--")
+            cmd_base.extend(files_filter)
+
+        res = subprocess.run(cmd_base, capture_output=True, text=True)
+        raw_diff = _filter_sensitive_diff_blocks(res.stdout or "")
+        diff_source_label = "Working Tree vs. HEAD"
+
+        # When tracked working-tree changes exist, also include non-sensitive untracked files
+        if raw_diff.strip():
+            untracked_diff = _collect_untracked_diff(worktree_dir, context_lines, files_filter)
+            if untracked_diff.strip():
+                raw_diff = raw_diff.rstrip("\n") + "\n" + untracked_diff
 
     # If changes were already committed on the branch (git diff HEAD is empty), prefer the committed branch diff
     # before falling back to untracked working-tree files so unrelated untracked files in shared checkouts never mask a branch diff.
@@ -4747,7 +4823,11 @@ def generate_contextual_diff_html(
                 text=True,
             )
             if chk.returncode == 0:
-                ref_spec = f"{candidate}...HEAD" if candidate != "HEAD~1" else "HEAD~1..HEAD"
+                closer_tag = _tag_ancestor_if_closer(worktree_dir, candidate) if candidate != "HEAD~1" else None
+                if closer_tag:
+                    ref_spec = f"{closer_tag}..HEAD"
+                else:
+                    ref_spec = f"{candidate}...HEAD" if candidate != "HEAD~1" else "HEAD~1..HEAD"
                 fb_cmd = ["git", "-C", worktree_dir, "diff", f"-U{context_lines}", ref_spec]
                 if files_filter:
                     fb_cmd.append("--")
@@ -5293,6 +5373,7 @@ def cmd_update_phase(args: argparse.Namespace) -> int:
                 files_filter=files_list or None,
                 show_pre_pr_banner=(phase_key == "heimdall" and args.status == "awaiting_human" and idx == 0),
                 pr_url=pr_url if idx == 0 else "",
+                diff_base=getattr(args, "diff_base", "") or "",
             )
             diff_blocks.append(diff_html)
         combined_diff_html = "\n".join(diff_blocks)
@@ -7343,6 +7424,7 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--html-file-fragment", help="Path to file containing HTML fragment for the iteration card body")
     up.add_argument("--with-diff", action="store_true", help="Render an interactive Side-by-Side + Unified contextual git diff viewer inside the iteration card")
     up.add_argument("--diff-context", type=int, default=12, help="Number of surrounding context lines for git diff (default: 12, vs GitHub's 3)")
+    up.add_argument("--diff-base", help="Explicit git base ref (tag, branch, or SHA) for --with-diff instead of defaulting to origin/HEAD")
     up.add_argument("--diff-rationale", help="Architectural 'What Changed & Why' summary banner rendered above the code diff")
     up.add_argument("--file-note", action="append", help="Per-file 'Why This File Changed' explanation (format: 'path/to/file.js=Explanation' or JSON dict; repeatable)")
     up.add_argument("--repo-dir", action="append", help="Explicit git repository/worktree directory (repeatable for multi-repo diffs; defaults to body[data-worktree])")

@@ -257,5 +257,77 @@ class TestTokenGate(_IsolatedConfig, unittest.TestCase):
         self.assertFalse(self.server_mod._ip_is_loopback("not-an-ip"))
 
 
+class TestDiffBaseAndTagHotfixFallback(unittest.TestCase):
+    def setUp(self):
+        self.state_mod = load_module("odin_state_diff_base_test", SCRIPTS / "odin-state.py")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name) / "repo"
+        self.repo.mkdir()
+        self._git("init", "-b", "main")
+        self._git("config", "user.email", "test@example.com")
+        self._git("config", "user.name", "Test")
+        (self.repo / "base.txt").write_text("v1\n")
+        self._git("add", "base.txt")
+        self._git("commit", "-m", "initial")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _git(self, *args):
+        subprocess.run(
+            ["git", "-C", str(self.repo), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_tag_hotfix_branch_diffs_from_nearest_ancestor_tag_and_explicit_diff_base(self):
+        # Cut a hotfix line off main, tag v1.0.1, then advance main with unrelated work
+        self._git("checkout", "-b", "release-1.0")
+        (self.repo / "release_only.txt").write_text("r1\n")
+        self._git("add", "release_only.txt")
+        self._git("commit", "-m", "release 1.0.1")
+        self._git("tag", "v1.0.1")
+
+        self._git("checkout", "main")
+        (self.repo / "main_ahead.txt").write_text("main v2\n")
+        self._git("add", "main_ahead.txt")
+        self._git("commit", "-m", "advance main")
+
+        # Branch fix off tag v1.0.1 with one focused commit
+        self._git("checkout", "-b", "fix/hotfix-target", "v1.0.1")
+        (self.repo / "hotfix.txt").write_text("fixed\n")
+        self._git("add", "hotfix.txt")
+        self._git("commit", "-m", "apply hotfix")
+
+        auto_html = self.state_mod.generate_contextual_diff_html(str(self.repo))
+        self.assertIn("hotfix.txt", auto_html)
+        self.assertNotIn("release_only.txt", auto_html)
+        self.assertIn("v1.0.1..HEAD", auto_html)
+
+        explicit_html = self.state_mod.generate_contextual_diff_html(
+            str(self.repo), diff_base="v1.0.1"
+        )
+        self.assertIn("hotfix.txt", explicit_html)
+        self.assertNotIn("release_only.txt", explicit_html)
+        self.assertIn("Explicit Diff Base (v1.0.1...HEAD)", explicit_html)
+
+    def test_normal_feature_branch_off_main_still_diffs_against_main(self):
+        self._git("tag", "v1.0.0")
+        (self.repo / "main_next.txt").write_text("next\n")
+        self._git("add", "main_next.txt")
+        self._git("commit", "-m", "main commit after tag")
+
+        self._git("checkout", "-b", "feat/normal")
+        (self.repo / "feat.txt").write_text("feature\n")
+        self._git("add", "feat.txt")
+        self._git("commit", "-m", "add feature")
+
+        html = self.state_mod.generate_contextual_diff_html(str(self.repo))
+        self.assertIn("feat.txt", html)
+        self.assertNotIn("main_next.txt", html)
+        self.assertIn("main...HEAD", html)
+
+
 if __name__ == "__main__":
     unittest.main()
