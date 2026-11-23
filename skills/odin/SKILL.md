@@ -133,6 +133,7 @@ graph TD
 
 ### Phase 3: Heimdall (verify + pre-PR review gate)
 - Check the work against the testing strategy and Definition of Done.
+- **Synthetic fixtures & PII hygiene.** Before rendering the Pre-PR diff, verify that no real user or customer identifiers (emails, IP addresses, account, order, or session IDs) from prior troubleshooting or log-inspection turns leaked into staged code, docstrings, skill docs, tests, or prompt summaries; replace any real identifiers with synthetic RFC 2606/5737 fixtures (such as `example.com` or `198.51.100.x`).
 - For a change people will see (a new sprite, scene, screen or component), make at least one verification capture show the new piece beside something that already exists and that it will appear next to. A capture of the new piece alone can't show whether its scale, perspective or style match its surroundings.
 - When code changed, render the contextual diff and seed candidate `### Prompt Summary` bullets in the state file:
   ```bash
